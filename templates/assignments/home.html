@@ -5,37 +5,102 @@
 {% block content %}
 <div class="row">
     <div class="col-12">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2>📋 我的作业</h2>
+        <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+            <h2 class="mb-0">📋 我的作业</h2>
             <span class="badge bg-primary fs-6">{{ user.name }} ({{ user.student_id }})</span>
         </div>
+
+        <!-- 统计卡片 -->
+        <div class="row g-3 mb-4">
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body text-center">
+                        <h3 class="mb-0">{{ stats.total }}</h3>
+                        <small class="text-muted">作业项目</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm h-100 bg-success-subtle">
+                    <div class="card-body text-center">
+                        <h3 class="mb-0 text-success">{{ stats.submitted }}</h3>
+                        <small class="text-muted">已提交</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm h-100 bg-secondary-subtle">
+                    <div class="card-body text-center">
+                        <h3 class="mb-0 text-secondary">{{ stats.unsubmitted }}</h3>
+                        <small class="text-muted">未提交</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm h-100 bg-danger-subtle">
+                    <div class="card-body text-center">
+                        <h3 class="mb-0 text-danger">{{ stats.overdue }}</h3>
+                        <small class="text-muted">已逾期未交</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 筛选与搜索 -->
+        <form class="row g-2 mb-4 align-items-center" method="get">
+            <div class="col-auto">
+                <div class="btn-group" role="group" aria-label="状态筛选">
+                    <a href="?status=all&search={{ search_query }}" class="btn btn-sm {% if status_filter == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}">全部</a>
+                    <a href="?status=submitted&search={{ search_query }}" class="btn btn-sm {% if status_filter == 'submitted' %}btn-primary{% else %}btn-outline-primary{% endif %}">已提交</a>
+                    <a href="?status=unsubmitted&search={{ search_query }}" class="btn btn-sm {% if status_filter == 'unsubmitted' %}btn-primary{% else %}btn-outline-primary{% endif %}">未提交</a>
+                    <a href="?status=expired&search={{ search_query }}" class="btn btn-sm {% if status_filter == 'expired' %}btn-primary{% else %}btn-outline-primary{% endif %}">已逾期</a>
+                    <a href="?status=late&search={{ search_query }}" class="btn btn-sm {% if status_filter == 'late' %}btn-primary{% else %}btn-outline-primary{% endif %}">逾期补交</a>
+                </div>
+            </div>
+            <div class="col-auto ms-auto">
+                <div class="input-group">
+                    <input type="text" name="search" class="form-control form-control-sm" placeholder="搜索项目名" value="{{ search_query }}">
+                    <button class="btn btn-sm btn-outline-secondary" type="submit">搜索</button>
+                </div>
+            </div>
+        </form>
 
         {% if projects %}
             <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
                 {% for project in projects %}
                     <div class="col">
-                        <div class="card h-100 shadow-sm">
+                        <div class="card h-100 shadow-sm {% if project.is_expired and not project.submitted %}border-danger{% elif project.due_soon %}border-warning{% endif %}">
                             <div class="card-body">
-                                <h5 class="card-title">{{ project.project.name }}</h5>
+                                <div class="d-flex justify-content-between align-items-start mb-2 gap-2">
+                                    <h5 class="card-title mb-0">{{ project.project.name }}</h5>
+                                    {% if project.due_soon and not project.is_expired %}
+                                        <span class="badge bg-warning text-dark flex-shrink-0">⏰ 即将截止</span>
+                                    {% elif project.is_expired and not project.submitted %}
+                                        <span class="badge bg-danger flex-shrink-0">已逾期</span>
+                                    {% elif project.submitted and project.is_late %}
+                                        <span class="badge bg-warning text-dark flex-shrink-0">逾期补交</span>
+                                    {% endif %}
+                                </div>
                                 <p class="card-text text-muted">
                                     {{ project.project.description|default:"暂无描述"|truncatechars:100 }}
                                 </p>
                                 {% if project.project.deadline %}
-                                    <p class="card-text">
+                                    <p class="card-text mb-0">
                                         <small class="{% if project.is_expired %}text-danger{% else %}text-warning{% endif %}">
                                             ⏰ 截止时间：{{ project.project.deadline|date:"Y-m-d H:i" }}
                                         </small>
                                     </p>
                                 {% endif %}
                             </div>
-                            <div class="card-footer bg-transparent">
+                            <div class="card-footer bg-transparent d-flex justify-content-between align-items-center">
                                 {% if project.submitted %}
                                     <span class="badge bg-success">✅ 已提交</span>
-                                    <a href="{% url 'submit_project' project.project.slug %}" class="btn btn-outline-primary btn-sm float-end">查看</a>
                                 {% else %}
                                     <span class="badge bg-secondary">📤 未提交</span>
-                                    <a href="{% url 'submit_project' project.project.slug %}" class="btn btn-primary btn-sm float-end">提交作业</a>
                                 {% endif %}
+                                <a href="{% url 'submit_project' project.project.slug %}" class="btn btn-outline-primary btn-sm">
+                                    {% if project.submitted %}查看 / 补交{% else %}提交作业{% endif %}
+                                </a>
                             </div>
                         </div>
                     </div>
@@ -43,8 +108,8 @@
             </div>
         {% else %}
             <div class="alert alert-info">
-                <h5 class="alert-heading">暂无可用作业项目</h5>
-                <p class="mb-0">当前没有可提交的作业项目，请联系管理员创建。</p>
+                <h5 class="alert-heading">没有符合条件的作业项目</h5>
+                <p class="mb-0">尝试调整筛选条件，或联系管理员创建新的作业项目。</p>
             </div>
         {% endif %}
     </div>

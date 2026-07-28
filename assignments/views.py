@@ -30,21 +30,74 @@ def format_rename_pattern(pattern, student, project, original_filename):
 
 @login_required
 def home_view(request):
-    """学生首页，显示所有活跃的作业项目及提交状态"""
-    projects = Project.objects.filter(is_active=True)
+    """学生首页：展示作业项目、提交状态、统计与筛选"""
+    now = timezone.now()
     user = request.user
 
-    # 如果用户不是管理员，标记每个项目是否已提交
+    status_filter = request.GET.get("status", "all")
+    search = request.GET.get("search", "").strip()
+
+    projects = Project.objects.filter(is_active=True).order_by("deadline")
+
+    total = projects.count()
+    submitted_count = 0
+    overdue_count = 0   # 已截止但仍未提交
+    late_count = 0      # 逾期补交（已提交但晚于截止时间）
+
     project_list = []
     for project in projects:
-        data = {
-            "project": project,
-            "submitted": Submission.objects.filter(project=project, student=user).exists(),
-            "is_expired": project.deadline and timezone.now() > project.deadline,
-        }
-        project_list.append(data)
+        submission = Submission.objects.filter(project=project, student=user).first()
+        is_submitted = submission is not None
+        is_late = bool(submission and submission.is_late)
+        is_expired = bool(project.deadline and now > project.deadline)
+        due_soon = bool(
+            project.deadline
+            and now <= project.deadline
+            and (project.deadline - now).days <= 3
+        )
 
-    return render(request, "assignments/home.html", {"projects": project_list})
+        if is_submitted:
+            submitted_count += 1
+            if is_late:
+                late_count += 1
+        if is_expired and not is_submitted:
+            overdue_count += 1
+
+        # 状态筛选
+        if status_filter == "submitted" and not is_submitted:
+            continue
+        if status_filter == "unsubmitted" and is_submitted:
+            continue
+        if status_filter == "expired" and not (is_expired and not is_submitted):
+            continue
+        if status_filter == "late" and not (is_submitted and is_late):
+            continue
+        if search and search.lower() not in project.name.lower():
+            continue
+
+        project_list.append({
+            "project": project,
+            "submission": submission,
+            "submitted": is_submitted,
+            "is_late": is_late,
+            "is_expired": is_expired,
+            "due_soon": due_soon,
+        })
+
+    stats = {
+        "total": total,
+        "submitted": submitted_count,
+        "unsubmitted": total - submitted_count,
+        "overdue": overdue_count,
+        "late": late_count,
+    }
+
+    return render(request, "assignments/home.html", {
+        "projects": project_list,
+        "stats": stats,
+        "status_filter": status_filter,
+        "search_query": search,
+    })
 
 
 @login_required

@@ -77,6 +77,13 @@ class Submission(models.Model):
 
     submitted_at = models.DateTimeField("提交时间", auto_now_add=True)
 
+    @property
+    def is_late(self):
+        """是否逾期提交：首次提交时间晚于项目截止时间"""
+        if self.project.deadline and self.submitted_at:
+            return self.submitted_at > self.project.deadline
+        return False
+
     class Meta:
         verbose_name = "提交记录"
         verbose_name_plural = verbose_name

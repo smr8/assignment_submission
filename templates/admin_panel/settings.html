@@ -130,13 +130,22 @@
             <div class="card-body">
                 <div class="row g-2">
                     <div class="col-auto">
-                        <a href="{% url 'admin_panel:backup_now' %}" class="btn btn-warning" onclick="return confirm('立即执行备份？')">🔄 立即备份</a>
+                        <form method="post" action="{% url 'admin_panel:backup_now' %}" class="d-inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-warning" onclick="return confirm('立即执行备份？')">🔄 立即备份</button>
+                        </form>
                     </div>
                     <div class="col-auto">
-                        <a href="{% url 'admin_panel:cleanup_now' %}" class="btn btn-danger" onclick="return confirm('立即清理本地存档？此操作不可撤销！')">🗑️ 立即清理本地存档</a>
+                        <form method="post" action="{% url 'admin_panel:cleanup_now' %}" class="d-inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-danger" onclick="return confirm('立即清理本地存档？仅删除超过保留期的文件，不会删除整个目录。')">🗑️ 立即清理本地存档</button>
+                        </form>
                     </div>
                     <div class="col-auto">
-                        <a href="{% url 'admin_panel:check_backup' %}" class="btn btn-info">✅ 检查备份状态</a>
+                        <form method="post" action="{% url 'admin_panel:check_backup' %}" class="d-inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-info">✅ 检查备份状态</button>
+                        </form>
                     </div>
                 </div>
             </div>

@@ -22,7 +22,7 @@ urlpatterns = [
 
     # 提交记录管理
     path("submissions/", views.submission_list_view, name="submission_list"),
-    path("submissions/<int:pk>/upload/", views.submission_upload_view, name="submission_upload_for"),
+    path("submissions/upload/<int:student_pk>/<int:project_pk>/", views.submission_upload_view, name="submission_upload_for"),
     path("submissions/<int:pk>/download/", views.download_submission_view, name="download_submission"),
     path("submissions/batch-download/", views.submission_batch_download_view, name="submission_batch_download"),
 

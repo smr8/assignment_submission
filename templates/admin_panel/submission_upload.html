@@ -50,10 +50,15 @@
                 <h4 class="mb-0">代学生提交作业</h4>
             </div>
             <div class="card-body">
-                <p><strong>学生：</strong>{{ submission.student.name }} ({{ submission.student.student_id }})</p>
-                <p><strong>作业项目：</strong>{{ submission.project.name }}</p>
-                <p><strong>当前文件：</strong>{{ submission.renamed_filename|default:submission.original_filename }}</p>
-                <p class="text-muted">上传新文件将覆盖当前提交。</p>
+                <p><strong>学生：</strong>{{ student.name }} ({{ student.student_id }})</p>
+                <p><strong>作业项目：</strong>{{ project.name }}</p>
+                {% if submission %}
+                    <p><strong>当前文件：</strong>{{ submission.renamed_filename|default:submission.original_filename }}</p>
+                    <p class="text-muted">上传新文件将覆盖当前提交。</p>
+                {% else %}
+                    <p><strong>当前文件：</strong><span class="badge bg-warning text-dark">未提交</span></p>
+                    <p class="text-muted">该学生尚未提交作业，上传后将为其新建提交记录。</p>
+                {% endif %}
             </div>
         </div>
 
@@ -99,7 +104,7 @@
 
             <div class="d-grid gap-2">
                 <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
-                    代提交作业
+                    {% if submission %}重新代提交作业{% else %}代提交作业{% endif %}
                 </button>
             </div>
         </form>

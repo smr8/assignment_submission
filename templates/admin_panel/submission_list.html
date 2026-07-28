@@ -14,7 +14,9 @@
 
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h2 class="mb-0">📂 提交记录管理</h2>
-            <button type="button" id="batchDownloadBtn" class="btn btn-primary" onclick="submitBatchDownload()">下载所选项</button>
+            {% if matrix_mode %}
+                <button type="button" id="batchDownloadBtn" class="btn btn-primary" onclick="submitBatchDownload()">下载所选项</button>
+            {% endif %}
         </div>
 
         <!-- 筛选 -->
@@ -23,8 +25,8 @@
                 <form method="get" class="row g-3 align-items-end">
                     <div class="col-md-3">
                         <label class="form-label">项目筛选</label>
-                        <select name="project" class="form-select">
-                            <option value="">全部项目</option>
+                        <select name="project" class="form-select" id="projectSelect">
+                            <option value="">全部项目（仅已提交）</option>
                             {% for p in filter_projects %}
                                 <option value="{{ p.id }}" {% if selected_project == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
                             {% endfor %}
@@ -34,6 +36,16 @@
                         <label class="form-label">搜索学号/姓名</label>
                         <input type="text" name="search" class="form-control" value="{{ search_query }}" placeholder="输入学号或姓名">
                     </div>
+                    {% if matrix_mode %}
+                    <div class="col-md-2">
+                        <label class="form-label">提交状态</label>
+                        <select name="status" class="form-select">
+                            <option value="">全部</option>
+                            <option value="submitted" {% if selected_status == 'submitted' %}selected{% endif %}>已提交</option>
+                            <option value="unsubmitted" {% if selected_status == 'unsubmitted' %}selected{% endif %}>未提交</option>
+                        </select>
+                    </div>
+                    {% endif %}
                     <div class="col-md-2">
                         <label class="form-label">申诉筛选</label>
                         <select name="appeal" class="form-select">
@@ -42,73 +54,179 @@
                             <option value="no" {% if selected_appeal == 'no' %}selected{% endif %}>无申诉</option>
                         </select>
                     </div>
-                    <div class="col-md-2">
-                        <button type="submit" class="btn btn-primary w-100">🔍 筛选</button>
+                    <div class="col-md-1">
+                        <button type="submit" class="btn btn-primary w-100">🔍</button>
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-md-1">
                         <a href="{% url 'admin_panel:submission_list' %}" class="btn btn-outline-secondary w-100">重置</a>
                     </div>
                 </form>
             </div>
         </div>
 
-        {% if submissions %}
-            <div class="table-responsive">
-                <table class="table table-striped table-hover">
-                    <thead class="table-dark">
-                        <tr>
-                            <th style="width: 40px;"><input type="checkbox" id="selectAll" class="form-check-input"></th>
-                            <th>学号</th>
-                            <th>姓名</th>
-                            <th>作业项目</th>
-                            <th>文件名</th>
-                            <th>大小</th>
-                            <th>自动重命名</th>
-                            <th>申诉</th>
-                            <th>提交时间</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for s in submissions %}
+        {% if matrix_mode %}
+            <!-- 矩阵模式：展示该项目下所有学生 -->
+            <div class="alert alert-info d-flex align-items-center">
+                <span class="me-3">📊 项目「{{ project.name }}」提交情况：</span>
+                <span class="badge bg-success me-2">已提交 {{ submitted_count }}</span>
+                <span class="badge bg-warning text-dark me-2">未提交 {{ unsubmitted_count }}</span>
+                <span class="badge bg-secondary">共 {{ rows|length }} 人</span>
+            </div>
+
+            {% if rows %}
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover align-middle">
+                        <thead class="table-dark">
                             <tr>
-                                <td><input type="checkbox" class="form-check-input submission-checkbox" value="{{ s.id }}"></td>
-                                <td>{{ s.student.student_id }}</td>
-                                <td>{{ s.student.name }}</td>
-                                <td>{{ s.project.name }}</td>
+                                <th style="width: 40px;"><input type="checkbox" id="selectAll" class="form-check-input"></th>
+                                <th>学号</th>
+                                <th>姓名</th>
+                                <th>文件名</th>
+                                <th>大小</th>
+                                <th>自动重命名</th>
+                                <th>申诉</th>
+                                <th>提交时间</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in rows %}
+                            {% with s=row.submission stu=row.student %}
+                            <tr {% if not s %}class="table-warning"{% endif %}>
                                 <td>
-                                    {% if s.renamed_filename %}
-                                        {{ s.renamed_filename }}
-                                    {% else %}
-                                        {{ s.original_filename }}
+                                    {% if s %}
+                                    <input type="checkbox" class="form-check-input submission-checkbox" value="{{ s.id }}">
                                     {% endif %}
                                 </td>
-                                <td>{{ s.file_size|filesizeformat }}</td>
+                                <td>{{ stu.student_id }}</td>
+                                <td>{{ stu.name }}</td>
                                 <td>
-                                    {% if s.auto_renamed %}<span class="badge bg-info">是</span>{% else %}<span class="badge bg-secondary">否</span>{% endif %}
+                                    {% if s %}
+                                        {% if s.renamed_filename %}{{ s.renamed_filename }}{% else %}{{ s.original_filename }}{% endif %}
+                                    {% else %}
+                                        <span class="badge bg-warning text-dark">未提交</span>
+                                    {% endif %}
                                 </td>
                                 <td>
-                                    {% if s.appeal_submitted %}
+                                    {% if s %}{{ s.file_size|filesizeformat }}{% else %}<span class="text-muted">—</span>{% endif %}
+                                </td>
+                                <td>
+                                    {% if s %}
+                                        {% if s.auto_renamed %}<span class="badge bg-info">是</span>{% else %}<span class="badge bg-secondary">否</span>{% endif %}
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if s and s.appeal_submitted %}
                                         <button type="button" class="btn btn-sm btn-outline-warning" title="{{ s.appeal }}" onclick="alert('申诉内容：\n{{ s.appeal|escapejs }}')">📬 查看</button>
                                     {% else %}
                                         <span class="text-muted">无</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ s.submitted_at|date:"Y-m-d H:i:s" }}</td>
                                 <td>
-                                    <a href="{% url 'admin_panel:submission_upload_for' s.id %}" class="btn btn-sm btn-primary">📤 上传</a>
-                                    <a href="{% url 'admin_panel:download_submission' s.id %}" class="btn btn-sm btn-primary">📥 下载</a>
+                                    {% if s %}
+                                        {{ s.submitted_at|date:"Y-m-d H:i:s" }}
+                                        {% if s.is_late %}<span class="badge bg-danger ms-1">逾期补交</span>{% endif %}
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if s %}
+                                        <span class="badge bg-success">已提交</span>
+                                    {% else %}
+                                        <span class="badge bg-warning text-dark">未提交</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <a href="{% url 'admin_panel:submission_upload_for' stu.id project.id %}" class="btn btn-sm {% if s %}btn-outline-primary{% else %}btn-primary{% endif %}">
+                                        {% if s %}📤 重新上传{% else %}📤 代提交{% endif %}
+                                    </a>
+                                    {% if s %}
+                                        <a href="{% url 'admin_panel:download_submission' s.id %}" class="btn btn-sm btn-outline-success">📥 下载</a>
+                                    {% endif %}
                                 </td>
                             </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+                            {% endwith %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="alert alert-info">
+                    <h5 class="alert-heading">暂无学生</h5>
+                    <p class="mb-0">当前没有符合筛选条件的学生。</p>
+                </div>
+            {% endif %}
         {% else %}
-            <div class="alert alert-info">
-                <h5 class="alert-heading">暂无提交记录</h5>
-                <p class="mb-0">当前没有符合条件的提交记录。</p>
+            <!-- 平铺模式：未选项目，展示全部提交记录 -->
+            <div class="alert alert-light border">
+                💡 提示：选择上方「项目筛选」可查看该项目下<strong>所有学生</strong>（含未提交），并为未提交学生<strong>代提交</strong>作业。
             </div>
+
+            {% if submissions %}
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover align-middle">
+                        <thead class="table-dark">
+                            <tr>
+                                <th style="width: 40px;"><input type="checkbox" id="selectAll" class="form-check-input"></th>
+                                <th>学号</th>
+                                <th>姓名</th>
+                                <th>作业项目</th>
+                                <th>文件名</th>
+                                <th>大小</th>
+                                <th>自动重命名</th>
+                                <th>申诉</th>
+                                <th>提交时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for s in submissions %}
+                                <tr>
+                                    <td><input type="checkbox" class="form-check-input submission-checkbox" value="{{ s.id }}"></td>
+                                    <td>{{ s.student.student_id }}</td>
+                                    <td>{{ s.student.name }}</td>
+                                    <td>{{ s.project.name }}</td>
+                                    <td>
+                                        {% if s.renamed_filename %}
+                                            {{ s.renamed_filename }}
+                                        {% else %}
+                                            {{ s.original_filename }}
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ s.file_size|filesizeformat }}</td>
+                                    <td>
+                                        {% if s.auto_renamed %}<span class="badge bg-info">是</span>{% else %}<span class="badge bg-secondary">否</span>{% endif %}
+                                    </td>
+                                    <td>
+                                        {% if s.appeal_submitted %}
+                                            <button type="button" class="btn btn-sm btn-outline-warning" title="{{ s.appeal }}" onclick="alert('申诉内容：\n{{ s.appeal|escapejs }}')">📬 查看</button>
+                                        {% else %}
+                                            <span class="text-muted">无</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {{ s.submitted_at|date:"Y-m-d H:i:s" }}
+                                        {% if s.is_late %}<span class="badge bg-danger ms-1">逾期补交</span>{% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="{% url 'admin_panel:submission_upload_for' s.student.id s.project.id %}" class="btn btn-sm btn-outline-primary">📤 上传</a>
+                                        <a href="{% url 'admin_panel:download_submission' s.id %}" class="btn btn-sm btn-outline-success">📥 下载</a>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="alert alert-info">
+                    <h5 class="alert-heading">暂无提交记录</h5>
+                    <p class="mb-0">当前没有符合条件的提交记录。</p>
+                </div>
+            {% endif %}
         {% endif %}
     </div>
 </div>
@@ -123,22 +241,22 @@
 <script>
     const selectAll = document.getElementById('selectAll');
     const checkboxes = document.querySelectorAll('.submission-checkbox');
-    const batchDownloadBtn = document.getElementById('batchDownloadBtn');
 
-    selectAll.addEventListener('change', function() {
-        checkboxes.forEach(cb => cb.checked = this.checked);
-    });
-
-    // 当任一复选框取消选中时，取消全选状态
-    checkboxes.forEach(cb => {
-        cb.addEventListener('change', function() {
-            if (!this.checked) {
-                selectAll.checked = false;
-            } else if (document.querySelectorAll('.submission-checkbox:checked').length === checkboxes.length) {
-                selectAll.checked = true;
-            }
+    if (selectAll) {
+        selectAll.addEventListener('change', function() {
+            checkboxes.forEach(cb => cb.checked = this.checked);
         });
-    });
+
+        checkboxes.forEach(cb => {
+            cb.addEventListener('change', function() {
+                if (!this.checked) {
+                    selectAll.checked = false;
+                } else if (document.querySelectorAll('.submission-checkbox:checked').length === checkboxes.length) {
+                    selectAll.checked = true;
+                }
+            });
+        });
+    }
 
     function submitBatchDownload() {
         const selected = document.querySelectorAll('.submission-checkbox:checked');
