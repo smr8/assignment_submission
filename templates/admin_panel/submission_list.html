@@ -12,7 +12,10 @@
             </ol>
         </nav>
 
-        <h2 class="mb-4">📂 提交记录管理</h2>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="mb-0">📂 提交记录管理</h2>
+            <button type="button" id="batchDownloadBtn" class="btn btn-primary" onclick="submitBatchDownload()">下载所选项</button>
+        </div>
 
         <!-- 筛选 -->
         <div class="card shadow-sm mb-4">
@@ -54,6 +57,7 @@
                 <table class="table table-striped table-hover">
                     <thead class="table-dark">
                         <tr>
+                            <th style="width: 40px;"><input type="checkbox" id="selectAll" class="form-check-input"></th>
                             <th>学号</th>
                             <th>姓名</th>
                             <th>作业项目</th>
@@ -68,6 +72,7 @@
                     <tbody>
                         {% for s in submissions %}
                             <tr>
+                                <td><input type="checkbox" class="form-check-input submission-checkbox" value="{{ s.id }}"></td>
                                 <td>{{ s.student.student_id }}</td>
                                 <td>{{ s.student.name }}</td>
                                 <td>{{ s.project.name }}</td>
@@ -91,6 +96,7 @@
                                 </td>
                                 <td>{{ s.submitted_at|date:"Y-m-d H:i:s" }}</td>
                                 <td>
+                                    <a href="{% url 'admin_panel:submission_upload_for' s.id %}" class="btn btn-sm btn-primary">📤 上传</a>
                                     <a href="{% url 'admin_panel:download_submission' s.id %}" class="btn btn-sm btn-primary">📥 下载</a>
                                 </td>
                             </tr>
@@ -106,4 +112,43 @@
         {% endif %}
     </div>
 </div>
+
+<form id="batchDownloadForm" method="post" action="{% url 'admin_panel:submission_batch_download' %}">
+    {% csrf_token %}
+    <input type="hidden" name="ids" id="batchDownloadIds">
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const selectAll = document.getElementById('selectAll');
+    const checkboxes = document.querySelectorAll('.submission-checkbox');
+    const batchDownloadBtn = document.getElementById('batchDownloadBtn');
+
+    selectAll.addEventListener('change', function() {
+        checkboxes.forEach(cb => cb.checked = this.checked);
+    });
+
+    // 当任一复选框取消选中时，取消全选状态
+    checkboxes.forEach(cb => {
+        cb.addEventListener('change', function() {
+            if (!this.checked) {
+                selectAll.checked = false;
+            } else if (document.querySelectorAll('.submission-checkbox:checked').length === checkboxes.length) {
+                selectAll.checked = true;
+            }
+        });
+    });
+
+    function submitBatchDownload() {
+        const selected = document.querySelectorAll('.submission-checkbox:checked');
+        if (selected.length === 0) {
+            alert('请先选择要下载的提交记录。');
+            return;
+        }
+        const ids = Array.from(selected).map(cb => cb.value).join(',');
+        document.getElementById('batchDownloadIds').value = ids;
+        document.getElementById('batchDownloadForm').submit();
+    }
+</script>
 {% endblock %}

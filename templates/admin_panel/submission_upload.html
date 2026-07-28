@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+
+{% block title %}代提交作业 - 管理后台{% endblock %}
+
+{% block extra_head %}
+<style>
+    .drop-zone {
+        border: 2px dashed #ccc;
+        border-radius: 10px;
+        padding: 40px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s;
+        background: #f8f9fa;
+    }
+    .drop-zone.dragover {
+        border-color: #0d6efd;
+        background: #e8f0fe;
+    }
+    .drop-zone.has-file {
+        border-color: #198754;
+        background: #d1e7dd;
+    }
+    .drop-zone-icon {
+        font-size: 3rem;
+        color: #6c757d;
+    }
+    .file-info {
+        display: none;
+    }
+    .file-info.show {
+        display: block;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'admin_panel:dashboard' %}">管理后台</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'admin_panel:submission_list' %}">提交记录管理</a></li>
+                <li class="breadcrumb-item active">代提交作业</li>
+            </ol>
+        </nav>
+
+        <div class="card shadow mb-4">
+            <div class="card-header bg-primary text-white">
+                <h4 class="mb-0">代学生提交作业</h4>
+            </div>
+            <div class="card-body">
+                <p><strong>学生：</strong>{{ submission.student.name }} ({{ submission.student.student_id }})</p>
+                <p><strong>作业项目：</strong>{{ submission.project.name }}</p>
+                <p><strong>当前文件：</strong>{{ submission.renamed_filename|default:submission.original_filename }}</p>
+                <p class="text-muted">上传新文件将覆盖当前提交。</p>
+            </div>
+        </div>
+
+        <form method="post" enctype="multipart/form-data" id="submissionForm">
+            {% csrf_token %}
+
+            <div class="card shadow mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">选择文件</h5>
+                </div>
+                <div class="card-body">
+                    <div class="drop-zone" id="dropZone">
+                        <div class="drop-zone-icon">📁</div>
+                        <p class="mb-2">拖拽文件到此处或点击选择文件</p>
+                        <input type="file" name="file" id="fileInput" class="d-none" required>
+                        <button type="button" class="btn btn-outline-primary" id="selectFileBtn">选择文件</button>
+                    </div>
+
+                    <div class="file-info mt-3" id="fileInfo">
+                        <div class="alert alert-success">
+                            <strong>已选择文件：</strong>
+                            <span id="fileName"></span>
+                            <span class="ms-3 text-muted" id="fileSize"></span>
+                            <button type="button" class="btn-close float-end" id="removeFile"></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card shadow mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">选项</h5>
+                </div>
+                <div class="card-body">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" name="auto_rename" id="autoRename" checked>
+                        <label class="form-check-label" for="autoRename">
+                            自动重命名文件
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-grid gap-2">
+                <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
+                    代提交作业
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileInfo = document.getElementById('fileInfo');
+    const fileName = document.getElementById('fileName');
+    const fileSize = document.getElementById('fileSize');
+    const removeFile = document.getElementById('removeFile');
+    const selectFileBtn = document.getElementById('selectFileBtn');
+
+    function updateFileInfo(file) {
+        if (file) {
+            fileName.textContent = file.name;
+            fileSize.textContent = '(' + (file.size / 1024 / 1024).toFixed(2) + ' MB)';
+            fileInfo.classList.add('show');
+            dropZone.classList.add('has-file');
+        } else {
+            fileInfo.classList.remove('show');
+            dropZone.classList.remove('has-file');
+            fileInput.value = '';
+        }
+    }
+
+    selectFileBtn.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            updateFileInfo(e.target.files[0]);
+        }
+    });
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('dragover');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length > 0) {
+            fileInput.files = e.dataTransfer.files;
+            updateFileInfo(e.dataTransfer.files[0]);
+        }
+    });
+
+    removeFile.addEventListener('click', () => {
+        updateFileInfo(null);
+    });
+
+    document.getElementById('submissionForm').addEventListener('submit', function(e) {
+        if (!fileInput.files.length) {
+            e.preventDefault();
+            alert('请先选择文件！');
+        }
+    });
+</script>
+{% endblock %}

@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
 
 from .forms import LoginForm, RegisterForm
+from .models import User
 
 
 def register_view(request):
@@ -35,6 +36,39 @@ def login_view(request):
     else:
         form = LoginForm(request=request)
     return render(request, "accounts/login.html", {"form": form})
+
+
+@login_required
+def account_manage_view(request):
+    if request.method == "POST":
+        user = request.user
+        new_name = request.POST.get("name", "").strip()
+        new_student_id = request.POST.get("student_id", "").strip()
+        new_password = request.POST.get("password", "")
+
+        if not new_name or not new_student_id:
+            messages.error(request, "姓名和学号不能为空。")
+            return render(request, "accounts/account_manage.html")
+
+        if new_student_id != user.student_id and User.objects.filter(student_id=new_student_id).exists():
+            messages.error(request, f"学号「{new_student_id}」已被占用。")
+            return render(request, "accounts/account_manage.html")
+
+        user.name = new_name
+        user.student_id = new_student_id
+        if new_password:
+            user.set_password(new_password)
+            # 修改密码后需要重新登录
+            user.save()
+            auth_logout(request)
+            messages.success(request, "账号信息已更新，请使用新密码重新登录。")
+            return redirect("login")
+
+        user.save()
+        messages.success(request, "账号信息已更新。")
+        return redirect("account_manage")
+
+    return render(request, "accounts/account_manage.html")
 
 
 def logout_view(request):

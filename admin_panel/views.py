@@ -8,7 +8,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
-from django.db.models import Count, Q
+from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -97,41 +97,6 @@ def export_csv_view(request):
             "是" if s.appeal_submitted else "否",
             s.submitted_at.strftime("%Y-%m-%d %H:%M:%S"),
         ])
-    return response
-
-
-# ==================== 项目 ZIP 下载 ====================
-
-@staff_member_required
-def download_project_list_view(request):
-    projects = Project.objects.annotate(submission_count=Count("submissions"))
-    return render(request, "admin_panel/download_project_list.html", {"projects": projects})
-
-
-@staff_member_required
-def download_project_zip_view(request, slug):
-    project = get_object_or_404(Project, slug=slug)
-    submissions = Submission.objects.filter(project=project).select_related("student")
-
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for sub in submissions:
-            if sub.file and os.path.exists(sub.file.path):
-                if project.rename_pattern:
-                    zip_name = format_rename_pattern(
-                        project.rename_pattern, sub.student, project, sub.original_filename)
-                else:
-                    _, ext = os.path.splitext(sub.original_filename)
-                    zip_name = f"{sub.student.student_id}_{sub.student.name}{ext}"
-                zf.write(sub.file.path, zip_name)
-            elif sub.file:
-                zip_name = f"{sub.student.student_id}_{sub.student.name}_FILE_MISSING.txt"
-                zf.writestr(zip_name,
-                    f"文件丢失: {sub.original_filename}\n提交时间: {sub.submitted_at}")
-
-    zip_buffer.seek(0)
-    response = HttpResponse(zip_buffer.getvalue(), content_type="application/zip")
-    response["Content-Disposition"] = f'attachment; filename="{project.slug}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.zip"'
     return response
 
 
@@ -262,6 +227,57 @@ def submission_list_view(request):
 
 
 @staff_member_required
+def submission_upload_view(request, pk):
+    """管理员代学生提交作业"""
+    submission = get_object_or_404(Submission.objects.select_related("project", "student"), pk=pk)
+    student = submission.student
+    project = submission.project
+
+    if request.method == "POST":
+        uploaded_file = request.FILES.get("file")
+
+        if not uploaded_file:
+            messages.error(request, "请选择要上传的文件。")
+            return render(request, "admin_panel/submission_upload.html", {"submission": submission})
+
+        if uploaded_file.size > project.max_file_size * 1024 * 1024:
+            messages.error(request, f"文件大小超过限制（{project.max_file_size} MB）。")
+            return render(request, "admin_panel/submission_upload.html", {"submission": submission})
+
+        if project.allowed_extensions:
+            _, ext = os.path.splitext(uploaded_file.name)
+            allowed = [e.strip().lower() for e in project.allowed_extensions.split(",")]
+            if ext.lower() not in allowed:
+                messages.error(request, f"不支持的文件类型，允许的类型：{project.allowed_extensions}")
+                return render(request, "admin_panel/submission_upload.html", {"submission": submission})
+
+        auto_rename = request.POST.get("auto_rename") == "on"
+        original_name = uploaded_file.name
+        renamed_name = original_name
+
+        if auto_rename and project.auto_rename:
+            pattern = project.rename_pattern or "{student_id} {name}{ext}"
+            renamed_name = format_rename_pattern(pattern, student, project, original_name)
+
+        Submission.objects.update_or_create(
+            project=project,
+            student=student,
+            defaults={
+                "file": uploaded_file,
+                "original_filename": original_name,
+                "renamed_filename": renamed_name,
+                "file_size": uploaded_file.size,
+                "auto_renamed": auto_rename,
+            },
+        )
+
+        messages.success(request, f"已代 {student.name}({student.student_id}) 提交「{project.name}」的作业。")
+        return redirect("admin_panel:submission_list")
+
+    return render(request, "admin_panel/submission_upload.html", {"submission": submission})
+
+
+@staff_member_required
 def download_submission_view(request, pk):
     """下载提交文件，以重命名后的文件名提供给浏览器"""
     submission = get_object_or_404(Submission.objects.select_related("project", "student"), pk=pk)
@@ -279,6 +295,43 @@ def download_submission_view(request, pk):
 
     download_name = submission.renamed_filename or submission.original_filename
     response = FileResponse(open(file_path, "rb"), as_attachment=True, filename=download_name)
+    return response
+
+
+@staff_member_required
+def submission_batch_download_view(request):
+    """批量下载所选提交文件为 ZIP"""
+    if request.method != "POST":
+        messages.error(request, "无效的请求方式。")
+        return redirect("admin_panel:submission_list")
+
+    ids_str = request.POST.get("ids", "")
+    if not ids_str:
+        messages.error(request, "请先选择要下载的提交记录。")
+        return redirect("admin_panel:submission_list")
+
+    ids = [int(x) for x in ids_str.split(",") if x.strip()]
+    if not ids:
+        messages.error(request, "请先选择要下载的提交记录。")
+        return redirect("admin_panel:submission_list")
+
+    submissions = Submission.objects.filter(pk__in=ids).select_related("project", "student")
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for sub in submissions:
+            if sub.file and os.path.exists(sub.file.path):
+                zip_name = sub.renamed_filename or sub.original_filename
+                # 如果同一个文件名出现多次，添加学号前缀避免冲突
+                existing_names = [info.filename for info in zf.filelist]
+                if zip_name in existing_names:
+                    base, ext = os.path.splitext(zip_name)
+                    zip_name = f"{sub.student.student_id}_{base}{ext}"
+                zf.write(sub.file.path, zip_name)
+
+    zip_buffer.seek(0)
+    response = HttpResponse(zip_buffer.getvalue(), content_type="application/zip")
+    response["Content-Disposition"] = f'attachment; filename="submissions_batch_{timezone.now().strftime("%Y%m%d_%H%M%S")}.zip"'
     return response
 
 

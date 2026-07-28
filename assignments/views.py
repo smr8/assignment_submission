@@ -53,11 +53,6 @@ def submit_project_view(request, slug):
     project = get_object_or_404(Project, slug=slug, is_active=True)
     user = request.user
 
-    # 如果用户是管理员则重定向
-    if user.is_staff:
-        messages.warning(request, "管理员账号无法提交作业。")
-        return redirect("home")
-
     existing_submission = Submission.objects.filter(project=project, student=user).first()
 
     if request.method == "POST":
