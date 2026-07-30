@@ -23,24 +23,8 @@
                     <h5 class="mt-4 mb-3">📦 存储后端配置</h5>
                     <hr>
 
-                    <h6>WebDAV</h6>
-                    <div class="row g-3 mb-4">
-                        <div class="col-md-6">
-                            <label class="form-label">URL</label>
-                            <input type="text" name="webdav_url" class="form-control" value="{{ settings.webdav_url }}" placeholder="https://example.com/dav/">
-                        </div>
-                        <div class="col-md-3">
-                            <label class="form-label">用户名</label>
-                            <input type="text" name="webdav_username" class="form-control" value="{{ settings.webdav_username }}">
-                        </div>
-                        <div class="col-md-3">
-                            <label class="form-label">密码</label>
-                            <input type="password" name="webdav_password" class="form-control" value="{{ settings.webdav_password }}">
-                        </div>
-                    </div>
-
                     <h6>Amazon S3 / 兼容对象存储</h6>
-                    <div class="row g-3 mb-4">
+                    <div class="row g-3 mb-2">
                         <div class="col-md-4">
                             <label class="form-label">Endpoint</label>
                             <input type="text" name="s3_endpoint" class="form-control" value="{{ settings.s3_endpoint }}" placeholder="https://s3.amazonaws.com">
@@ -62,30 +46,58 @@
                             <input type="password" name="s3_secret_key" class="form-control" value="{{ settings.s3_secret_key }}">
                         </div>
                     </div>
-
-                    <h6>SMB 共享</h6>
-                    <div class="row g-3 mb-4">
-                        <div class="col-md-4">
-                            <label class="form-label">Host</label>
-                            <input type="text" name="smb_host" class="form-control" value="{{ settings.smb_host }}">
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">Share</label>
-                            <input type="text" name="smb_share" class="form-control" value="{{ settings.smb_share }}">
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">Domain</label>
-                            <input type="text" name="smb_domain" class="form-control" value="{{ settings.smb_domain }}">
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">用户名</label>
-                            <input type="text" name="smb_username" class="form-control" value="{{ settings.smb_username }}">
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">密码</label>
-                            <input type="password" name="smb_password" class="form-control" value="{{ settings.smb_password }}">
-                        </div>
+                    <div class="mb-4">
+                        <button type="button" class="btn btn-outline-info btn-sm" id="btnTestS3" onclick="testConnection('s3')">
+                            🔌 测试 S3 连接
+                        </button>
+                        <span id="s3TestResult" class="ms-2"></span>
                     </div>
+
+                    <details class="mb-4">
+                        <summary class="h6 text-muted" style="cursor:pointer">WebDAV / SMB（展开配置）</summary>
+
+                        <h6 class="mt-3">WebDAV</h6>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">URL</label>
+                                <input type="text" name="webdav_url" class="form-control" value="{{ settings.webdav_url }}" placeholder="https://example.com/dav/">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">用户名</label>
+                                <input type="text" name="webdav_username" class="form-control" value="{{ settings.webdav_username }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">密码</label>
+                                <input type="password" name="webdav_password" class="form-control" value="{{ settings.webdav_password }}">
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-info btn-sm mb-3" onclick="testConnection('webdav')">🔌 测试 WebDAV 连接</button>
+
+                        <h6>SMB 共享</h6>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <label class="form-label">Host</label>
+                                <input type="text" name="smb_host" class="form-control" value="{{ settings.smb_host }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Share</label>
+                                <input type="text" name="smb_share" class="form-control" value="{{ settings.smb_share }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Domain</label>
+                                <input type="text" name="smb_domain" class="form-control" value="{{ settings.smb_domain }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">用户名</label>
+                                <input type="text" name="smb_username" class="form-control" value="{{ settings.smb_username }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">密码</label>
+                                <input type="password" name="smb_password" class="form-control" value="{{ settings.smb_password }}">
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-info btn-sm mb-3" onclick="testConnection('smb')">🔌 测试 SMB 连接</button>
+                    </details>
 
                     <h5 class="mt-4 mb-3">🔄 备份与清理</h5>
                     <hr>
@@ -123,17 +135,23 @@
             </div>
         </div>
 
-        <div class="card shadow">
+        <div class="card shadow mb-4">
             <div class="card-header">
-                <h5 class="mb-0">🔗 快速操作</h5>
+                <h5 class="mb-0">🔗 备份操作</h5>
             </div>
             <div class="card-body">
                 <div class="row g-2">
                     <div class="col-auto">
                         <form method="post" action="{% url 'admin_panel:backup_now' %}" class="d-inline">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-warning" onclick="return confirm('立即执行备份？')">🔄 立即备份</button>
+                            <button type="submit" class="btn btn-warning" onclick="return confirm('立即执行全量备份（数据库 + 所有文件）？')">🔄 立即备份</button>
                         </form>
+                    </div>
+                    <div class="col-auto">
+                        <a href="{% url 'admin_panel:backup_history' %}" class="btn btn-secondary">📋 备份历史</a>
+                    </div>
+                    <div class="col-auto">
+                        <a href="{% url 'admin_panel:restore' %}" class="btn btn-info text-white">♻️ 从备份恢复</a>
                     </div>
                     <div class="col-auto">
                         <form method="post" action="{% url 'admin_panel:cleanup_now' %}" class="d-inline">
@@ -144,7 +162,7 @@
                     <div class="col-auto">
                         <form method="post" action="{% url 'admin_panel:check_backup' %}" class="d-inline">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-info">✅ 检查备份状态</button>
+                            <button type="submit" class="btn btn-outline-info">✅ 检查备份状态</button>
                         </form>
                     </div>
                 </div>
@@ -152,4 +170,48 @@
         </div>
     </div>
 </div>
+
+<script>
+function testConnection(backend) {
+    var resultSpan = document.getElementById(backend === 's3' ? 's3TestResult' : null);
+    if (resultSpan) {
+        resultSpan.innerHTML = '<span class="text-muted">测试中...</span>';
+    }
+
+    var formData = new FormData();
+    formData.append('backend', backend);
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+    fetch('{% url "admin_panel:test_connection" %}', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.ok) {
+            if (resultSpan) {
+                resultSpan.innerHTML = '<span class="text-success">✅ ' + data.message + '</span>';
+            } else {
+                alert('✅ ' + data.message);
+            }
+        } else {
+            if (resultSpan) {
+                resultSpan.innerHTML = '<span class="text-danger">❌ ' + data.message + '</span>';
+            } else {
+                alert('❌ ' + data.message);
+            }
+        }
+    })
+    .catch(err => {
+        if (resultSpan) {
+            resultSpan.innerHTML = '<span class="text-danger">❌ 请求失败</span>';
+        } else {
+            alert('❌ 请求失败: ' + err);
+        }
+    });
+}
+</script>
 {% endblock %}

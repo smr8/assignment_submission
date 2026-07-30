@@ -138,3 +138,47 @@ class LiveSettings(models.Model):
 
     def __str__(self):
         return "系统设置"
+
+
+class BackupRecord(models.Model):
+    """备份记录 — 每次执行备份后创建一条"""
+
+    BACKUP_TYPES = [
+        ("full", "全量备份"),
+        ("incremental", "增量备份"),
+    ]
+
+    STATUSES = [
+        ("success", "成功"),
+        ("partial", "部分成功"),
+        ("failed", "失败"),
+    ]
+
+    backup_type = models.CharField("备份类型", max_length=16, default="full", choices=BACKUP_TYPES)
+    backend_type = models.CharField("存储后端", max_length=32, default="s3")
+    status = models.CharField("状态", max_length=16, default="success", choices=STATUSES)
+    backup_prefix = models.CharField("远程备份路径前缀", max_length=512, blank=True, help_text="如 backups/20250730_173000/")
+    file_count = models.PositiveIntegerField("备份文件数", default=0)
+    total_size = models.PositiveBigIntegerField("备份总大小 (bytes)", default=0)
+    database_backed_up = models.BooleanField("已备份数据库", default=False)
+    duration_seconds = models.FloatField("耗时 (秒)", default=0)
+    error_message = models.TextField("错误信息", blank=True)
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "备份记录"
+        verbose_name_plural = verbose_name
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"[{self.status}] {self.backend_type} - {self.created_at.strftime('%Y-%m-%d %H:%M:%S')}"
+
+    @property
+    def total_size_display(self):
+        """人类可读的文件大小"""
+        size = self.total_size
+        for unit in ["B", "KB", "MB", "GB"]:
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"

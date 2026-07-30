@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import os
 import zipfile
 from datetime import timedelta
@@ -8,13 +9,15 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db.models import Q
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 
 from accounts.models import User
-from assignments.models import LiveSettings, Project, Submission
+from assignments.models import BackupRecord, LiveSettings, Project, Submission
 from assignments.views import format_rename_pattern
+from storage_backends import get_storage_backend
 
 
 # ==================== 仪表盘 ====================
@@ -593,3 +596,237 @@ def check_backup_view(request):
         messages.warning(request, "尚未配置任何远程存储，备份将仅针对远程项目生效。")
 
     return redirect("admin_panel:settings")
+
+
+# ==================== 连接测试 ====================
+
+@staff_member_required
+def test_connection_view(request):
+    """测试远程存储后端连接（支持 AJAX 和普通请求）"""
+    backend = request.POST.get("backend", "s3")
+    s = LiveSettings.load()
+
+    try:
+        storage = get_storage_backend(backend, s)
+        ok, msg = storage.test_connection()
+    except Exception as e:
+        ok, msg = False, f"初始化失败: {e}"
+
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return JsonResponse({"ok": ok, "message": msg})
+    if ok:
+        messages.success(request, msg)
+    else:
+        messages.error(request, msg)
+    return redirect("admin_panel:settings")
+
+
+# ==================== 备份历史 ====================
+
+@staff_member_required
+def backup_history_view(request):
+    """显示备份历史记录"""
+    records = BackupRecord.objects.all()[:50]
+    return render(request, "admin_panel/backup_history.html", {"records": records})
+
+
+# ==================== 从备份恢复 ====================
+
+@staff_member_required
+def restore_view(request):
+    """显示可用备份列表，支持从备份恢复"""
+    s = LiveSettings.load()
+
+    # 确定后端
+    backend_type = request.GET.get("backend", "")
+    if not backend_type:
+        if s.s3_bucket and s.s3_access_key and s.s3_secret_key:
+            backend_type = "s3"
+        elif s.webdav_url and s.webdav_username:
+            backend_type = "webdav"
+        elif s.smb_host and s.smb_share:
+            backend_type = "smb"
+
+    backups = []
+    error_msg = ""
+
+    if backend_type:
+        try:
+            storage = get_storage_backend(backend_type, s)
+            ok, msg = storage.test_connection()
+            if ok:
+                all_files = storage.list_files_with_info("backups/")
+                # 按 manifest.json 聚合
+                backup_map = {}
+                for f in all_files:
+                    key = f["key"]
+                    if key.endswith("manifest.json"):
+                        prefix = key.rsplit("manifest.json", 1)[0]
+                        backup_map[prefix] = {
+                            "prefix": prefix,
+                            "manifest_key": key,
+                            "info": f,
+                            "file_count": None,
+                            "database_backed_up": None,
+                            "total_size_display": None,
+                        }
+
+                # 尝试读取每个备份的 manifest
+                for prefix, data in backup_map.items():
+                    manifest = _fetch_remote_manifest(storage, data["manifest_key"])
+                    if manifest:
+                        data["file_count"] = manifest.get("file_count")
+                        data["database_backed_up"] = manifest.get("database_backed_up")
+                        data["errors"] = manifest.get("errors", [])
+
+                    # 计算该备份的总大小
+                    backup_files = [f for f in all_files if f["key"].startswith(prefix)]
+                    total_size = sum(f.get("size", 0) for f in backup_files)
+                    data["total_size_display"] = _format_size(total_size)
+
+                    modified = data["info"].get("last_modified", "")
+                    if hasattr(modified, "strftime"):
+                        modified = modified.strftime("%Y-%m-%d %H:%M:%S")
+                    data["modified_display"] = str(modified)
+
+                    backups.append(data)
+
+                backups.sort(key=lambda x: x["prefix"], reverse=True)
+            else:
+                error_msg = msg
+        except Exception as e:
+            error_msg = str(e)
+
+    return render(request, "admin_panel/restore.html", {
+        "backups": backups,
+        "backend_type": backend_type,
+        "error_msg": error_msg,
+    })
+
+
+@staff_member_required
+@require_POST
+def restore_execute_view(request):
+    """执行从备份恢复"""
+    prefix = request.POST.get("prefix", "")
+    skip_db = request.POST.get("skip_db") == "on"
+    s = LiveSettings.load()
+
+    if not prefix:
+        messages.error(request, "请指定要恢复的备份。")
+        return redirect("admin_panel:restore")
+
+    # 确定后端
+    backend_type = ""
+    if s.s3_bucket and s.s3_access_key and s.s3_secret_key:
+        backend_type = "s3"
+    elif s.webdav_url and s.webdav_username:
+        backend_type = "webdav"
+    elif s.smb_host and s.smb_share:
+        backend_type = "smb"
+
+    if not backend_type:
+        messages.error(request, "没有可用的远程存储后端。")
+        return redirect("admin_panel:restore")
+
+    if not prefix.endswith("/"):
+        prefix += "/"
+
+    try:
+        storage = get_storage_backend(backend_type, s)
+        all_files = storage.list_files_with_info(prefix)
+
+        if not all_files:
+            messages.error(request, f"未找到备份文件: {prefix}")
+            return redirect("admin_panel:restore")
+
+        # 分类
+        db_file = None
+        media_files = []
+        for f in all_files:
+            key = f["key"]
+            if key.endswith("db.sqlite3"):
+                db_file = key
+            elif "/media/" in key:
+                media_files.append(key)
+
+        restored_count = 0
+        errors = []
+
+        # 恢复数据库
+        if not skip_db and db_file:
+            import tempfile
+            import shutil
+            tmp_db = os.path.join(tempfile.gettempdir(), "db_restore.sqlite3")
+            try:
+                storage.download(db_file, tmp_db)
+                from django.db import connection
+                connection.close()
+                db_path = str(settings.DATABASES["default"]["NAME"])
+                # 备份当前数据库
+                if os.path.exists(db_path):
+                    backup_db = db_path + ".pre_restore"
+                    shutil.copy2(db_path, backup_db)
+                shutil.move(tmp_db, db_path)
+                restored_count += 1
+                messages.success(request, "数据库已恢复。")
+            except Exception as e:
+                errors.append(f"数据库恢复失败: {e}")
+
+        # 恢复媒体文件
+        media_root = str(settings.MEDIA_ROOT)
+        for key in media_files:
+            media_idx = key.find("/media/")
+            if media_idx == -1:
+                continue
+            rel_path = key[media_idx + len("/media/"):]
+            local_path = os.path.join(media_root, rel_path.replace("/", os.sep))
+            try:
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                storage.download(key, local_path)
+                restored_count += 1
+            except Exception as e:
+                errors.append(f"{rel_path}: {e}")
+
+        if errors:
+            messages.warning(request, f"恢复完成（{restored_count} 个成功，{len(errors)} 个失败）：\n" + "\n".join(errors[:5]))
+        else:
+            messages.success(request, f"恢复完成，共恢复 {restored_count} 个文件。")
+
+        if not skip_db and db_file:
+            messages.warning(request, "数据库已恢复，建议重启应用以使更改生效。")
+
+    except Exception as e:
+        messages.error(request, f"恢复失败: {e}")
+
+    return redirect("admin_panel:restore")
+
+
+# ==================== 辅助函数 ====================
+
+def _fetch_remote_manifest(storage, manifest_key):
+    """下载并解析远程 manifest.json"""
+    import tempfile
+    tmp_dir = tempfile.mkdtemp()
+    tmp_file = os.path.join(tmp_dir, "manifest.json")
+    try:
+        storage.download(manifest_key, tmp_file)
+        with open(tmp_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+    finally:
+        try:
+            if os.path.exists(tmp_file):
+                os.remove(tmp_file)
+            os.rmdir(tmp_dir)
+        except Exception:
+            pass
+
+
+def _format_size(size):
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"

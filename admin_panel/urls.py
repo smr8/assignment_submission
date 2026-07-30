@@ -36,4 +36,8 @@ urlpatterns = [
     path("backup/now/", views.backup_now_view, name="backup_now"),
     path("cleanup/now/", views.cleanup_now_view, name="cleanup_now"),
     path("check/backup/", views.check_backup_view, name="check_backup"),
+    path("backup/test-connection/", views.test_connection_view, name="test_connection"),
+    path("backup/history/", views.backup_history_view, name="backup_history"),
+    path("backup/restore/", views.restore_view, name="restore"),
+    path("backup/restore/execute/", views.restore_execute_view, name="restore_execute"),
 ]

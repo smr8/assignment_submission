@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}备份历史 - 管理后台{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'admin_panel:dashboard' %}">管理后台</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'admin_panel:settings' %}">系统设置</a></li>
+                <li class="breadcrumb-item active">备份历史</li>
+            </ol>
+        </nav>
+
+        <div class="card shadow">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h4 class="mb-0">📋 备份历史</h4>
+                <div>
+                    <a href="{% url 'admin_panel:settings' %}" class="btn btn-secondary btn-sm">返回设置</a>
+                    <a href="{% url 'admin_panel:restore' %}" class="btn btn-info btn-sm text-white">♻️ 从备份恢复</a>
+                </div>
+            </div>
+            <div class="card-body">
+                {% if records %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>时间</th>
+                                <th>后端</th>
+                                <th>状态</th>
+                                <th>类型</th>
+                                <th>文件数</th>
+                                <th>总大小</th>
+                                <th>数据库</th>
+                                <th>耗时</th>
+                                <th>远程路径</th>
+                                <th>详情</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for record in records %}
+                            <tr>
+                                <td>{{ record.created_at|date:"Y-m-d H:i:s" }}</td>
+                                <td><span class="badge bg-secondary">{{ record.backend_type }}</span></td>
+                                <td>
+                                    {% if record.status == 'success' %}
+                                        <span class="badge bg-success">成功</span>
+                                    {% elif record.status == 'partial' %}
+                                        <span class="badge bg-warning text-dark">部分成功</span>
+                                    {% else %}
+                                        <span class="badge bg-danger">失败</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if record.backup_type == 'full' %}
+                                        <span class="badge bg-primary">全量</span>
+                                    {% else %}
+                                        <span class="badge bg-info text-dark">增量</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ record.file_count }}</td>
+                                <td>{{ record.total_size_display }}</td>
+                                <td>
+                                    {% if record.database_backed_up %}
+                                        <span class="text-success">✅</span>
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ record.duration_seconds }}s</td>
+                                <td><code class="text-muted small">{{ record.backup_prefix }}</code></td>
+                                <td>
+                                    {% if record.error_message %}
+                                        <button type="button" class="btn btn-outline-warning btn-sm" data-bs-toggle="popover" data-bs-trigger="focus" title="错误信息" data-bs-content="{{ record.error_message|truncatechars:500 }}">⚠️ 查看</button>
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5 text-muted">
+                    <h5>暂无备份记录</h5>
+                    <p class="mb-3">点击"立即备份"创建第一个备份</p>
+                    <a href="{% url 'admin_panel:settings' %}" class="btn btn-primary">前往设置</a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// 初始化 popover
+document.addEventListener('DOMContentLoaded', function() {
+    var popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'));
+    popoverTriggerList.map(function (popoverTriggerEl) {
+        return new bootstrap.Popover(popoverTriggerEl);
+    });
+});
+</script>
+{% endblock %}

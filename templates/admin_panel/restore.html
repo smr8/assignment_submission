@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}从备份恢复 - 管理后台{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'admin_panel:dashboard' %}">管理后台</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'admin_panel:settings' %}">系统设置</a></li>
+                <li class="breadcrumb-item active">从备份恢复</li>
+            </ol>
+        </nav>
+
+        <div class="card shadow">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h4 class="mb-0">♻️ 从备份恢复</h4>
+                <div>
+                    <a href="{% url 'admin_panel:backup_history' %}" class="btn btn-secondary btn-sm">备份历史</a>
+                    <a href="{% url 'admin_panel:settings' %}" class="btn btn-secondary btn-sm">返回设置</a>
+                </div>
+            </div>
+            <div class="card-body">
+                {% if error_msg %}
+                <div class="alert alert-danger">
+                    <strong>❌ 连接失败：</strong>{{ error_msg }}
+                    <hr>
+                    请在 <a href="{% url 'admin_panel:settings' %}">系统设置</a> 中检查存储后端配置，并使用"测试连接"按钮验证。
+                </div>
+                {% endif %}
+
+                {% if not backend_type %}
+                <div class="alert alert-warning">
+                    <strong>⚠️ 未配置远程存储后端</strong><br>
+                    请先在 <a href="{% url 'admin_panel:settings' %}">系统设置</a> 中配置 S3 / WebDAV / SMB 存储后端。
+                </div>
+                {% elif not backups and not error_msg %}
+                <div class="text-center py-5 text-muted">
+                    <h5>未找到可用备份</h5>
+                    <p class="mb-3">远程存储中没有备份文件。请先执行一次备份。</p>
+                    <a href="{% url 'admin_panel:settings' %}" class="btn btn-primary">前往执行备份</a>
+                </div>
+                {% elif backups %}
+                <div class="alert alert-warning" role="alert">
+                    <strong>⚠️ 注意：</strong>恢复操作将覆盖本地文件。如果恢复数据库，当前数据库将被替换（系统会自动创建 .pre_restore 备份）。建议在低峰期操作。
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>备份路径</th>
+                                <th>时间</th>
+                                <th>文件数</th>
+                                <th>总大小</th>
+                                <th>数据库</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for backup in backups %}
+                            <tr>
+                                <td><code>{{ backup.prefix }}</code></td>
+                                <td>{{ backup.modified_display }}</td>
+                                <td>
+                                    {% if backup.file_count is not None %}
+                                        {{ backup.file_count }}
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ backup.total_size_display|default:"—" }}</td>
+                                <td>
+                                    {% if backup.database_backed_up %}
+                                        <span class="text-success">✅ 含数据库</span>
+                                    {% elif backup.database_backed_up is None %}
+                                        <span class="text-muted">未知</span>
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <!-- 恢复按钮：含数据库 -->
+                                    {% if backup.database_backed_up %}
+                                    <form method="post" action="{% url 'admin_panel:restore_execute' %}" class="d-inline"
+                                          onsubmit="return confirm('⚠️ 确认恢复此备份？\n\n这将覆盖本地文件和数据库！\n系统会自动备份当前数据库为 .pre_restore 文件。\n\n备份路径: {{ backup.prefix }}\n\n确定继续吗？')">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="prefix" value="{{ backup.prefix }}">
+                                        <button type="submit" class="btn btn-warning btn-sm">🔄 完整恢复</button>
+                                    </form>
+                                    <form method="post" action="{% url 'admin_panel:restore_execute' %}" class="d-inline"
+                                          onsubmit="return confirm('确认仅恢复文件（不覆盖数据库）？\n\n备份路径: {{ backup.prefix }}')">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="prefix" value="{{ backup.prefix }}">
+                                        <input type="hidden" name="skip_db" value="on">
+                                        <button type="submit" class="btn btn-outline-info btn-sm">📄 仅文件</button>
+                                    </form>
+                                    {% else %}
+                                    <form method="post" action="{% url 'admin_panel:restore_execute' %}" class="d-inline"
+                                          onsubmit="return confirm('确认恢复此备份的文件？\n\n备份路径: {{ backup.prefix }}')">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="prefix" value="{{ backup.prefix }}">
+                                        <button type="submit" class="btn btn-warning btn-sm">🔄 恢复文件</button>
+                                    </form>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="mt-3">
+                    <span class="text-muted small">
+                        当前存储后端: <strong>{{ backend_type }}</strong>
+                    </span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
