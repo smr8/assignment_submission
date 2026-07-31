@@ -123,7 +123,8 @@ class Command(BaseCommand):
             info = data["info"]
             modified = info.get("last_modified", "")
             if hasattr(modified, "strftime"):
-                modified = modified.strftime("%Y-%m-%d %H:%M:%S")
+                from django.utils import timezone
+                modified = timezone.localtime(modified).strftime("%Y-%m-%d %H:%M:%S")
             self.stdout.write(f"  📦 {prefix}")
             self.stdout.write(f"     时间: {modified}")
 

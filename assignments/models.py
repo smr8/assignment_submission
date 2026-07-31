@@ -2,6 +2,7 @@ import os
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 def submission_upload_to(instance, filename):
@@ -171,7 +172,7 @@ class BackupRecord(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"[{self.status}] {self.backend_type} - {self.created_at.strftime('%Y-%m-%d %H:%M:%S')}"
+        return f"[{self.status}] {self.backend_type} - {timezone.localtime(self.created_at).strftime('%Y-%m-%d %H:%M:%S')}"
 
     @property
     def total_size_display(self):

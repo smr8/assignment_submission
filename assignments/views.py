@@ -13,7 +13,7 @@ from .models import Project, Submission
 def format_rename_pattern(pattern, student, project, original_filename):
     """根据模板生成重命名后的文件名，确保扩展名保留"""
     name, ext = os.path.splitext(original_filename)
-    timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = timezone.localtime().strftime("%Y%m%d_%H%M%S")
     result = pattern.format(
         student_id=student.student_id,
         name=student.name,

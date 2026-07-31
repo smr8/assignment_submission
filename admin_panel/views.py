@@ -124,7 +124,7 @@ def stats_view(request):
 @staff_member_required
 def export_csv_view(request):
     response = HttpResponse(content_type="text/csv; charset=utf-8-sig")
-    response["Content-Disposition"] = f'attachment; filename="submissions_{timezone.now().strftime("%Y%m%d")}.csv"'
+    response["Content-Disposition"] = f'attachment; filename="submissions_{timezone.localtime().strftime("%Y%m%d")}.csv"'
 
     writer = csv.writer(response)
     writer.writerow(["学号", "姓名", "作业项目", "原始文件名", "重命名文件名", "文件大小(B)", "自动重命名", "有申诉", "提交时间"])
@@ -136,7 +136,7 @@ def export_csv_view(request):
             s.original_filename, s.renamed_filename, s.file_size,
             "是" if s.auto_renamed else "否",
             "是" if s.appeal_submitted else "否",
-            s.submitted_at.strftime("%Y-%m-%d %H:%M:%S"),
+            timezone.localtime(s.submitted_at).strftime("%Y-%m-%d %H:%M:%S"),
         ])
     return response
 
@@ -220,7 +220,7 @@ def project_edit_view(request, pk):
             "rename_pattern": project.rename_pattern,
             "storage_backend": project.storage_backend,
             "max_file_size": project.max_file_size,
-            "deadline": project.deadline.strftime("%Y-%m-%dT%H:%M") if project.deadline else "",
+            "deadline": timezone.localtime(project.deadline).strftime("%Y-%m-%dT%H:%M") if project.deadline else "",
             "allowed_extensions": project.allowed_extensions or "",
             "is_active": project.is_active,
             "auto_rename": project.auto_rename,
@@ -431,7 +431,7 @@ def submission_batch_download_view(request):
 
     zip_buffer.seek(0)
     response = HttpResponse(zip_buffer.getvalue(), content_type="application/zip")
-    response["Content-Disposition"] = f'attachment; filename="submissions_batch_{timezone.now().strftime("%Y%m%d_%H%M%S")}.zip"'
+    response["Content-Disposition"] = f'attachment; filename="submissions_batch_{timezone.localtime().strftime("%Y%m%d_%H%M%S")}.zip"'
     return response
 
 
@@ -686,7 +686,7 @@ def restore_view(request):
 
                     modified = data["info"].get("last_modified", "")
                     if hasattr(modified, "strftime"):
-                        modified = modified.strftime("%Y-%m-%d %H:%M:%S")
+                        modified = timezone.localtime(modified).strftime("%Y-%m-%d %H:%M:%S")
                     data["modified_display"] = str(modified)
 
                     backups.append(data)

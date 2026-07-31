@@ -56,7 +56,7 @@ class Command(BaseCommand):
         start_time = time.time()
 
         self.stdout.write("=" * 60)
-        self.stdout.write(f"备份任务开始 — {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self.stdout.write(f"备份任务开始 — {timezone.localtime().strftime('%Y-%m-%d %H:%M:%S')}")
         self.stdout.write("=" * 60)
 
         # 确定备份后端
@@ -81,7 +81,7 @@ class Command(BaseCommand):
         self.stdout.write(f"✅ {msg}")
 
         # 生成备份路径前缀
-        timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = timezone.localtime().strftime("%Y%m%d_%H%M%S")
         backup_prefix = f"backups/{timestamp}/"
 
         file_count = 0
@@ -230,7 +230,7 @@ class Command(BaseCommand):
             "database_backed_up": db_backed_up,
             "django_version": self._get_django_version(),
             "errors": errors,
-            "created_at": timezone.now().isoformat(),
+            "created_at": timezone.localtime().isoformat(),
         }
 
     def _get_django_version(self):
