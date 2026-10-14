@@ -62,7 +62,10 @@ class Command(BaseCommand):
         # 确定备份后端
         backend_type = options["backend"] or self._select_backend(s)
         if not backend_type:
-            self.stdout.write(self.style.ERROR("❌ 没有可用的远程存储后端，请先在设置中配置 S3/WebDAV/SMB。"))
+            reason = "没有可用的远程存储后端，请先在设置中配置 S3/WebDAV/SMB。"
+            self.stdout.write(self.style.ERROR(f"❌ {reason}"))
+            # 关键：失败也要落一条记录，否则「备份历史」看不到任何结果
+            self._record_failure("", reason, start_time)
             return
 
         self.stdout.write(f"📦 使用存储后端: {backend_type}")
@@ -70,13 +73,16 @@ class Command(BaseCommand):
         try:
             remote_storage = get_storage_backend(backend_type, s)
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f"❌ 无法初始化存储后端: {e}"))
+            reason = f"无法初始化存储后端: {e}"
+            self.stdout.write(self.style.ERROR(f"❌ {reason}"))
+            self._record_failure(backend_type, reason, start_time)
             return
 
         # 测试连接
         ok, msg = remote_storage.test_connection()
         if not ok:
             self.stdout.write(self.style.ERROR(f"❌ {msg}"))
+            self._record_failure(backend_type, msg, start_time)
             return
         self.stdout.write(f"✅ {msg}")
 
@@ -159,6 +165,24 @@ class Command(BaseCommand):
         if settings_obj.smb_host and settings_obj.smb_share:
             return "smb"
         return ""
+
+    def _record_failure(self, backend_type, message, start_time):
+        """备份在真正开始前就失败时，也要写一条 BackupRecord，
+        这样「备份历史」页面才能反映真实结果（而不是永远没有新记录）。"""
+        try:
+            BackupRecord.objects.create(
+                backup_type="full",
+                backend_type=backend_type or "none",
+                status="failed",
+                backup_prefix="",
+                file_count=0,
+                total_size=0,
+                database_backed_up=False,
+                duration_seconds=round(time.time() - start_time, 2),
+                error_message=message,
+            )
+        except Exception as exc:  # 记录失败不应掩盖原始错误
+            self.stdout.write(self.style.ERROR(f"（写入备份记录失败: {exc}）"))
 
     def _backup_database(self, remote_storage, backup_prefix):
         """备份数据库文件"""

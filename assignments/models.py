@@ -62,6 +62,58 @@ class Project(models.Model):
         return self.name
 
 
+def project_image_upload_to(instance, filename):
+    """作业相关图片: project_assets/<slug>/images/filename"""
+    return os.path.join("project_assets", instance.project.slug, "images", filename)
+
+
+def project_attachment_upload_to(instance, filename):
+    """作业相关附件: project_assets/<slug>/files/filename"""
+    return os.path.join("project_assets", instance.project.slug, "files", filename)
+
+
+class ProjectImage(models.Model):
+    """作业项目的配图（图片 + 描述，供学生提交页预览）"""
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name="images", verbose_name="作业项目"
+    )
+    image = models.FileField("图片", upload_to=project_image_upload_to)
+    caption = models.CharField("描述", max_length=255, blank=True)
+    sort_order = models.PositiveIntegerField("排序", default=0)
+    created_at = models.DateTimeField("上传时间", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "作业图片"
+        verbose_name_plural = verbose_name
+        ordering = ["sort_order", "id"]
+
+    def __str__(self):
+        return self.caption or os.path.basename(self.image.name)
+
+
+class ProjectAttachment(models.Model):
+    """作业项目的附件（资料，供学生下载）"""
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name="attachments", verbose_name="作业项目"
+    )
+    file = models.FileField("附件", upload_to=project_attachment_upload_to)
+    name = models.CharField("显示名称", max_length=255, blank=True)
+    file_size = models.PositiveIntegerField("文件大小 (bytes)", default=0)
+    created_at = models.DateTimeField("上传时间", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "作业附件"
+        verbose_name_plural = verbose_name
+        ordering = ["id"]
+
+    def __str__(self):
+        return self.name or os.path.basename(self.file.name)
+
+    @property
+    def display_name(self):
+        return self.name or os.path.basename(self.file.name)
+
+
 class Submission(models.Model):
     """学生提交的作业"""
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="submissions", verbose_name="作业项目")

@@ -53,6 +53,7 @@
             <div class="col-auto"><a href="{% url 'admin_panel:submission_list' %}" class="btn btn-outline-primary">📂 提交记录</a></div>
             <div class="col-auto"><a href="{% url 'admin_panel:user_list' %}" class="btn btn-outline-primary">👥 用户管理</a></div>
             <div class="col-auto"><a href="{% url 'admin_panel:stats' %}" class="btn btn-outline-primary">📊 统计概览</a></div>
+            <div class="col-auto"><a href="{% url 'admin_panel:backup_history' %}" class="btn btn-outline-primary">📋 备份历史</a></div>
             <div class="col-auto"><a href="{% url 'admin_panel:settings' %}" class="btn btn-outline-primary">⚙️ 系统设置</a></div>
             <div class="col-auto"><a href="{% url 'admin_panel:export_csv' %}" class="btn btn-outline-primary">📤 导出 CSV</a></div>
         </div>
@@ -66,7 +67,8 @@
                     </div>
                     <div class="card-body">
                         {% for stat in project_bars %}
-                            <div class="mb-3">
+                            <a href="{% url 'admin_panel:project_stats_detail' stat.project.id %}"
+                               class="d-block text-decoration-none text-reset mb-3">
                                 <div class="d-flex justify-content-between align-items-center mb-1">
                                     <span>{{ stat.project.name }}</span>
                                     <span class="fw-bold">{{ stat.percentage }}%</span>
@@ -83,7 +85,7 @@
                                 <small class="text-muted">{{ stat.submitted_count }} / {{ stat.total_students }} 人
                                     {% if stat.is_expired %}<span class="badge bg-danger ms-1">已截止</span>{% else %}<span class="badge bg-success ms-1">进行中</span>{% endif %}
                                 </small>
-                            </div>
+                            </a>
                         {% empty %}
                             <p class="text-muted mb-0">暂无项目数据</p>
                         {% endfor %}

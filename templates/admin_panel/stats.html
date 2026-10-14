@@ -2,6 +2,26 @@
 
 {% block title %}提交统计 - 管理后台{% endblock %}
 
+{% block extra_head %}
+<style>
+    .stat-card {
+        transition: transform .15s ease, box-shadow .15s ease;
+        text-decoration: none;
+        color: inherit;
+        display: block;
+        height: 100%;
+    }
+    .stat-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 .75rem 1.5rem rgba(0, 0, 0, .12) !important;
+    }
+    .stat-card .stat-hint {
+        color: #6c757d;
+        font-size: .8rem;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="row">
     <div class="col-12">
@@ -12,37 +32,51 @@
             </ol>
         </nav>
 
-        <h2 class="mb-4">📊 提交统计</h2>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="mb-0">📊 提交统计</h2>
+            <small class="text-muted">点击项目卡片可查看未交名单</small>
+        </div>
 
         <div class="row g-4 mb-4">
             {% for stat in project_stats %}
                 <div class="col-md-4">
-                    <div class="card h-100 shadow-sm">
-                        <div class="card-body">
-                            <h5 class="card-title">{{ stat.project.name }}</h5>
-                            <div class="mb-3">
-                                <div class="d-flex justify-content-between">
-                                    <span>提交人数</span>
-                                    <strong>{{ stat.submitted_count }} / {{ stat.total_students }}</strong>
+                    <a href="{% url 'admin_panel:project_stats_detail' stat.project.id %}" class="stat-card">
+                        <div class="card h-100 shadow-sm">
+                            <div class="card-body">
+                                <h5 class="card-title">{{ stat.project.name }}</h5>
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between">
+                                        <span>提交人数</span>
+                                        <strong>{{ stat.submitted_count }} / {{ stat.total_students }}</strong>
+                                    </div>
+                                    <div class="progress mt-1" style="height: 10px;">
+                                        <div class="progress-bar bg-success" style="width: {{ stat.percentage }}%"></div>
+                                    </div>
+                                    <div class="d-flex justify-content-between mt-1">
+                                        <small class="text-muted">{{ stat.percentage }}%</small>
+                                        {% if stat.unsubmitted_count %}
+                                            <small class="text-danger">未交 {{ stat.unsubmitted_count }} 人</small>
+                                        {% endif %}
+                                    </div>
                                 </div>
-                                <div class="progress mt-1" style="height: 10px;">
-                                    <div class="progress-bar bg-success" style="width: {{ stat.percentage }}%"></div>
-                                </div>
-                                <small class="text-muted">{{ stat.percentage }}%</small>
+                                {% if stat.project.deadline %}
+                                    <p class="mb-1">
+                                        ⏰ 截止：{{ stat.project.deadline|date:"Y-m-d H:i" }}
+                                        {% if stat.is_expired %}
+                                            <span class="badge bg-danger">已截止</span>
+                                        {% else %}
+                                            <span class="badge bg-success">进行中</span>
+                                        {% endif %}
+                                    </p>
+                                {% endif %}
+                                <p class="mb-0 text-muted">存储后端：{{ stat.project.get_storage_backend_display }}</p>
                             </div>
-                            {% if stat.project.deadline %}
-                                <p class="mb-1">
-                                    ⏰ 截止：{{ stat.project.deadline|date:"Y-m-d H:i" }}
-                                    {% if stat.is_expired %}
-                                        <span class="badge bg-danger">已截止</span>
-                                    {% else %}
-                                        <span class="badge bg-success">进行中</span>
-                                    {% endif %}
-                                </p>
-                            {% endif %}
-                            <p class="mb-0 text-muted">存储后端：{{ stat.project.get_storage_backend_display }}</p>
+                            <div class="card-footer bg-transparent d-flex justify-content-between align-items-center">
+                                <span class="stat-hint">查看已交 / 未交明细</span>
+                                <span class="stat-hint">→</span>
+                            </div>
                         </div>
-                    </div>
+                    </a>
                 </div>
             {% empty %}
                 <div class="col-12">

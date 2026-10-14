@@ -8,6 +8,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
+from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -15,8 +16,20 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from accounts.models import User
-from assignments.models import BackupRecord, LiveSettings, Project, Submission
-from assignments.views import format_rename_pattern
+from assignments.models import (
+    BackupRecord,
+    LiveSettings,
+    Project,
+    ProjectAttachment,
+    ProjectImage,
+    Submission,
+)
+from assignments.views import (
+    format_rename_pattern,
+    persist_submission,
+    safe_delete_file,
+    validate_upload,
+)
 from storage_backends import get_storage_backend
 
 
@@ -101,7 +114,7 @@ def settings_view(request):
 
 @staff_member_required
 def stats_view(request):
-    projects = Project.objects.all()
+    projects = Project.objects.all().prefetch_related("images", "attachments")
     project_stats = []
     total_students = User.objects.filter(is_staff=False, is_active=True).count()
 
@@ -111,12 +124,61 @@ def stats_view(request):
         project_stats.append({
             "project": project,
             "submitted_count": submitted_count,
+            "unsubmitted_count": max(total_students - submitted_count, 0),
             "total_students": total_students,
             "percentage": percentage,
             "is_expired": project.deadline and timezone.now() > project.deadline,
         })
 
     return render(request, "admin_panel/stats.html", {"project_stats": project_stats})
+
+
+@staff_member_required
+def project_stats_detail_view(request, pk):
+    """单个项目的提交明细：列出已交 / 未交学生的姓名与学号"""
+    project = get_object_or_404(Project, pk=pk)
+    students = User.objects.filter(is_staff=False, is_active=True).order_by("student_id")
+    submissions = Submission.objects.filter(project=project).select_related("student")
+    sub_map = {sub.student_id: sub for sub in submissions}
+
+    submitted = []
+    unsubmitted = []
+    seen = set()
+    for stu in students:
+        seen.add(stu.pk)
+        sub = sub_map.get(stu.pk)
+        if sub is not None:
+            submitted.append({"student": stu, "submission": sub})
+        else:
+            unsubmitted.append(stu)
+    # 已停用 / 非活跃但仍有提交记录的学生，避免漏统计
+    for sub in submissions:
+        if sub.student_id not in seen:
+            submitted.append({"student": sub.student, "submission": sub})
+
+    total = len(submitted) + len(unsubmitted)
+
+    # 导出未交名单
+    if request.GET.get("format") == "csv":
+        response = HttpResponse(content_type="text/csv; charset=utf-8-sig")
+        filename = f"unsubmitted_{project.slug}_{timezone.localtime().strftime('%Y%m%d')}.csv"
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        writer = csv.writer(response)
+        writer.writerow(["学号", "姓名", "作业项目", "状态"])
+        for stu in unsubmitted:
+            writer.writerow([stu.student_id, stu.name, project.name, "未提交"])
+        return response
+
+    return render(request, "admin_panel/stats_detail.html", {
+        "project": project,
+        "submitted": submitted,
+        "unsubmitted": unsubmitted,
+        "submitted_count": len(submitted),
+        "unsubmitted_count": len(unsubmitted),
+        "total_count": total,
+        "percentage": round(len(submitted) / total * 100, 1) if total else 0,
+        "is_expired": project.deadline and timezone.now() > project.deadline,
+    })
 
 
 # ==================== 导出 CSV ====================
@@ -145,7 +207,7 @@ def export_csv_view(request):
 
 @staff_member_required
 def project_list_view(request):
-    projects = Project.objects.all().order_by("-created_at")
+    projects = Project.objects.all().prefetch_related("images", "attachments").order_by("-created_at")
     return render(request, "admin_panel/project_list.html", {"projects": projects})
 
 
@@ -165,10 +227,18 @@ def project_create_view(request):
         )
         deadline_str = request.POST.get("deadline", "")
         if deadline_str:
-            from django.utils import timezone as tz
-            project.deadline = tz.datetime.fromisoformat(deadline_str)
+            project.deadline = timezone.datetime.fromisoformat(deadline_str)
         project.save()
-        messages.success(request, f"项目「{project.name}」已创建！")
+
+        image_count, attachment_count, errors = _save_project_assets(project, request)
+        msg = f"项目「{project.name}」已创建！"
+        if image_count or attachment_count:
+            msg += f"（新增 {image_count} 张图片、{attachment_count} 个附件）"
+        messages.success(request, msg)
+        for err in errors:
+            messages.warning(request, err)
+        if request.POST.get("_save_and_stay") == "1":
+            return redirect("admin_panel:project_edit", pk=project.pk)
         return redirect("admin_panel:project_list")
 
     return render(request, "admin_panel/project_form.html", {
@@ -185,6 +255,9 @@ def project_create_view(request):
             "is_active": True,
             "auto_rename": True,
         },
+        "images": [],
+        "attachments": [],
+        "image_extensions": ",".join(settings.PROJECT_IMAGE_EXTENSIONS),
     })
 
 
@@ -203,13 +276,20 @@ def project_edit_view(request, pk):
         project.allowed_extensions = request.POST.get("allowed_extensions", project.allowed_extensions)
         deadline_str = request.POST.get("deadline", "")
         if deadline_str:
-            from django.utils import timezone as tz
-            project.deadline = tz.datetime.fromisoformat(deadline_str)
+            project.deadline = timezone.datetime.fromisoformat(deadline_str)
         else:
             project.deadline = None
         project.save()
-        messages.success(request, f"项目「{project.name}」已更新！")
-        return redirect("admin_panel:project_list")
+
+        _update_project_assets(project, request)
+        image_count, attachment_count, errors = _save_project_assets(project, request)
+        msg = f"项目「{project.name}」已更新！"
+        if image_count or attachment_count:
+            msg += f"（新增 {image_count} 张图片、{attachment_count} 个附件）"
+        messages.success(request, msg)
+        for err in errors:
+            messages.warning(request, err)
+        return redirect("admin_panel:project_edit", pk=project.pk)
 
     return render(request, "admin_panel/project_form.html", {
         "title": f"编辑：{project.name}",
@@ -225,13 +305,78 @@ def project_edit_view(request, pk):
             "is_active": project.is_active,
             "auto_rename": project.auto_rename,
         },
+        "images": project.images.all(),
+        "attachments": project.attachments.all(),
+        "image_extensions": ",".join(settings.PROJECT_IMAGE_EXTENSIONS),
     })
+
+
+def _save_project_assets(project, request):
+    """保存新建的图片（含描述）与附件，返回 (图片数, 附件数, 错误列表)"""
+    errors = []
+    image_count = 0
+    attachment_count = 0
+
+    image_files = request.FILES.getlist("image_files")
+    captions = request.POST.getlist("image_captions")
+    sort_base = project.images.count()
+    allowed_image_ext = [e.lower() for e in settings.PROJECT_IMAGE_EXTENSIONS]
+
+    for idx, uploaded in enumerate(image_files):
+        _, ext = os.path.splitext(uploaded.name)
+        if allowed_image_ext and ext.lower() not in allowed_image_ext:
+            errors.append(f"「{uploaded.name}」不是支持的图片格式，已跳过。")
+            continue
+        caption = captions[idx].strip() if idx < len(captions) else ""
+        image = ProjectImage(
+            project=project,
+            caption=caption or os.path.basename(uploaded.name),
+            sort_order=sort_base + idx,
+        )
+        image.image = uploaded
+        image.save()
+        image_count += 1
+
+    for uploaded in request.FILES.getlist("attachment_files"):
+        attachment = ProjectAttachment(project=project)
+        attachment.file = uploaded
+        attachment.name = os.path.basename(uploaded.name)
+        attachment.file_size = uploaded.size
+        attachment.save()
+        attachment_count += 1
+
+    return image_count, attachment_count, errors
+
+
+def _update_project_assets(project, request):
+    """就地更新已有图片的描述 / 删除勾选项"""
+    delete_images = set(request.POST.getlist("image_delete"))
+    for image in project.images.all():
+        if str(image.pk) in delete_images:
+            safe_delete_file(image.image.storage, image.image.name)
+            image.delete()
+            continue
+        new_caption = request.POST.get(f"image_caption_{image.pk}")
+        if new_caption is not None and new_caption.strip() != image.caption:
+            image.caption = new_caption.strip()
+            image.save(update_fields=["caption"])
+
+    delete_attachments = set(request.POST.getlist("attachment_delete"))
+    for attachment in project.attachments.all():
+        if str(attachment.pk) in delete_attachments:
+            safe_delete_file(attachment.file.storage, attachment.file.name)
+            attachment.delete()
 
 
 @staff_member_required
 def project_delete_view(request, pk):
     project = get_object_or_404(Project, pk=pk)
     name = project.name
+    # 顺手清理磁盘上的图片 / 附件文件，避免 media 目录残留
+    for image in project.images.all():
+        safe_delete_file(image.image.storage, image.image.name)
+    for attachment in project.attachments.all():
+        safe_delete_file(attachment.file.storage, attachment.file.name)
     project.delete()
     messages.success(request, f"项目「{name}」已删除！")
     return redirect("admin_panel:project_list")
@@ -325,56 +470,38 @@ def submission_upload_view(request, student_pk, project_pk):
         .first()
     )
 
+    def _ctx():
+        return {
+            "student": student,
+            "project": project,
+            "submission": submission,
+            "chunk_size": settings.CHUNK_UPLOAD_SIZE,
+            "max_file_size_bytes": project.max_file_size * 1024 * 1024,
+            "auto_rename_default": project.auto_rename,
+        }
+
     if request.method == "POST":
         uploaded_file = request.FILES.get("file")
 
         if not uploaded_file:
             messages.error(request, "请选择要上传的文件。")
-            return render(request, "admin_panel/submission_upload.html", {
-                "student": student, "project": project, "submission": submission,
-            })
+            return render(request, "admin_panel/submission_upload.html", _ctx())
 
-        if uploaded_file.size > project.max_file_size * 1024 * 1024:
-            messages.error(request, f"文件大小超过限制（{project.max_file_size} MB）。")
-            return render(request, "admin_panel/submission_upload.html", {
-                "student": student, "project": project, "submission": submission,
-            })
-
-        if project.allowed_extensions:
-            _, ext = os.path.splitext(uploaded_file.name)
-            allowed = [e.strip().lower() for e in project.allowed_extensions.split(",")]
-            if ext.lower() not in allowed:
-                messages.error(request, f"不支持的文件类型，允许的类型：{project.allowed_extensions}")
-                return render(request, "admin_panel/submission_upload.html", {
-                    "student": student, "project": project, "submission": submission,
-                })
+        error = validate_upload(project, uploaded_file.name, uploaded_file.size)
+        if error:
+            messages.error(request, error)
+            return render(request, "admin_panel/submission_upload.html", _ctx())
 
         auto_rename = request.POST.get("auto_rename") == "on"
-        original_name = uploaded_file.name
-        renamed_name = original_name
-
-        if auto_rename and project.auto_rename:
-            pattern = project.rename_pattern or "{student_id} {name}{ext}"
-            renamed_name = format_rename_pattern(pattern, student, project, original_name)
-
-        Submission.objects.update_or_create(
-            project=project,
-            student=student,
-            defaults={
-                "file": uploaded_file,
-                "original_filename": original_name,
-                "renamed_filename": renamed_name,
-                "file_size": uploaded_file.size,
-                "auto_renamed": auto_rename,
-            },
+        persist_submission(
+            project, student, uploaded_file, uploaded_file.name,
+            uploaded_file.size, auto_rename, appeal="",
         )
 
         messages.success(request, f"已代 {student.name}({student.student_id}) 提交「{project.name}」的作业。")
         return redirect("admin_panel:submission_list")
 
-    return render(request, "admin_panel/submission_upload.html", {
-        "student": student, "project": project, "submission": submission,
-    })
+    return render(request, "admin_panel/submission_upload.html", _ctx())
 
 
 @staff_member_required
@@ -520,13 +647,40 @@ def backup_now_view(request):
     if request.method != "POST":
         messages.info(request, "请通过页面按钮执行备份。")
         return redirect("admin_panel:settings")
+
+    before_id = BackupRecord.objects.order_by("-id").values_list("id", flat=True).first()
+    output = io.StringIO()
     try:
         from django.core.management import call_command
-        call_command("backup_and_cleanup")
-        messages.success(request, "备份任务已执行，详见服务器日志。")
+        call_command("backup_and_cleanup", stdout=output)
     except Exception as e:
-        messages.error(request, f"备份失败：{e}")
-    return redirect("admin_panel:settings")
+        messages.error(request, f"备份执行出错：{e}")
+        return redirect("admin_panel:backup_history")
+
+    record = BackupRecord.objects.order_by("-id").first()
+    tail = output.getvalue().strip().splitlines()
+
+    if not record or record.id == before_id:
+        # 命令没有落库（理论上不应发生），把原始输出回显出来便于排查
+        detail = "；".join(tail[-3:]) if tail else "无输出"
+        messages.error(request, f"备份未执行：{detail}")
+    elif record.status == "success":
+        messages.success(
+            request,
+            f"备份成功：{record.file_count} 个文件 / {record.total_size_display}，"
+            f"耗时 {record.duration_seconds:.1f}s，路径 {record.backup_prefix}",
+        )
+    elif record.status == "partial":
+        messages.warning(
+            request,
+            f"备份部分成功：{record.file_count} 个文件成功，{len(record.error_message.splitlines())} 项失败，"
+            f"详情见备份历史。",
+        )
+    else:
+        first_error = record.error_message.splitlines()[0] if record.error_message else "未知原因"
+        messages.error(request, f"备份失败：{first_error}")
+
+    return redirect("admin_panel:backup_history")
 
 
 @staff_member_required
@@ -626,8 +780,20 @@ def test_connection_view(request):
 @staff_member_required
 def backup_history_view(request):
     """显示备份历史记录"""
-    records = BackupRecord.objects.all()[:50]
-    return render(request, "admin_panel/backup_history.html", {"records": records})
+    status = request.GET.get("status", "")
+    records = BackupRecord.objects.all()
+    if status in ("success", "partial", "failed"):
+        records = records.filter(status=status)
+
+    paginator = Paginator(records, 20)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    return render(request, "admin_panel/backup_history.html", {
+        "page_obj": page_obj,
+        "records": page_obj.object_list,
+        "total_count": paginator.count,
+        "selected_status": status,
+    })
 
 
 # ==================== 从备份恢复 ====================

@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - 提交明细{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'admin_panel:dashboard' %}">管理后台</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'admin_panel:stats' %}">提交统计</a></li>
+                <li class="breadcrumb-item active">{{ project.name }}</li>
+            </ol>
+        </nav>
+
+        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+            <h2 class="mb-0">📊 {{ project.name }}</h2>
+            <div class="d-flex gap-2">
+                <a href="{% url 'admin_panel:project_stats_detail' project.id %}?format=csv"
+                   class="btn btn-outline-success btn-sm">⬇️ 导出未交名单</a>
+                <a href="{% url 'admin_panel:submission_list' %}?project={{ project.id }}"
+                   class="btn btn-outline-primary btn-sm">📂 前往提交记录（可代提交）</a>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-4">
+                        <h3 class="mb-0">{{ total_count }}</h3>
+                        <small class="text-muted">应交人数</small>
+                    </div>
+                    <div class="col-4">
+                        <h3 class="mb-0 text-success">{{ submitted_count }}</h3>
+                        <small class="text-muted">已提交</small>
+                    </div>
+                    <div class="col-4">
+                        <h3 class="mb-0 text-danger">{{ unsubmitted_count }}</h3>
+                        <small class="text-muted">未提交</small>
+                    </div>
+                </div>
+                <div class="progress mt-3" style="height: 12px;">
+                    <div class="progress-bar bg-success" style="width: {{ percentage }}%"></div>
+                </div>
+                <div class="d-flex justify-content-between mt-1">
+                    <small class="text-muted">提交率 {{ percentage }}%</small>
+                    {% if project.deadline %}
+                        <small class="text-muted">
+                            ⏰ 截止：{{ project.deadline|date:"Y-m-d H:i" }}
+                            {% if is_expired %}
+                                <span class="badge bg-danger">已截止</span>
+                            {% else %}
+                                <span class="badge bg-success">进行中</span>
+                            {% endif %}
+                        </small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <!-- 未提交名单 -->
+            <div class="col-lg-6">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header bg-danger-subtle d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">❌ 未提交名单</h5>
+                        <span class="badge bg-danger">{{ unsubmitted_count }} 人</span>
+                    </div>
+                    <div class="card-body p-0">
+                        {% if unsubmitted %}
+                            <div class="table-responsive" style="max-height: 520px; overflow-y: auto;">
+                                <table class="table table-sm table-hover align-middle mb-0">
+                                    <thead class="table-light position-sticky top-0">
+                                        <tr>
+                                            <th style="width: 56px;">#</th>
+                                            <th>学号</th>
+                                            <th>姓名</th>
+                                            <th style="width: 96px;">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for stu in unsubmitted %}
+                                            <tr>
+                                                <td class="text-muted">{{ forloop.counter }}</td>
+                                                <td><code>{{ stu.student_id }}</code></td>
+                                                <td>{{ stu.name }}</td>
+                                                <td>
+                                                    <a href="{% url 'admin_panel:submission_upload_for' stu.id project.id %}"
+                                                       class="btn btn-sm btn-outline-primary py-0">代提交</a>
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        {% else %}
+                            <div class="p-4 text-center text-success">
+                                🎉 全部学生均已提交
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- 已提交名单 -->
+            <div class="col-lg-6">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header bg-success-subtle d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">✅ 已提交名单</h5>
+                        <span class="badge bg-success">{{ submitted_count }} 人</span>
+                    </div>
+                    <div class="card-body p-0">
+                        {% if submitted %}
+                            <div class="table-responsive" style="max-height: 520px; overflow-y: auto;">
+                                <table class="table table-sm table-hover align-middle mb-0">
+                                    <thead class="table-light position-sticky top-0">
+                                        <tr>
+                                            <th style="width: 56px;">#</th>
+                                            <th>学号</th>
+                                            <th>姓名</th>
+                                            <th>提交时间</th>
+                                            <th style="width: 88px;">文件</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for row in submitted %}
+                                            <tr>
+                                                <td class="text-muted">{{ forloop.counter }}</td>
+                                                <td><code>{{ row.student.student_id }}</code></td>
+                                                <td>{{ row.student.name }}</td>
+                                                <td class="small">
+                                                    {{ row.submission.submitted_at|date:"Y-m-d H:i" }}
+                                                    {% if row.submission.is_late %}
+                                                        <span class="badge bg-danger">逾期补交</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    <a href="{% url 'admin_panel:download_submission' row.submission.id %}"
+                                                       class="btn btn-sm btn-outline-success py-0">下载</a>
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        {% else %}
+                            <div class="p-4 text-center text-muted">暂无提交记录</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -91,6 +91,16 @@
                                         </small>
                                     </p>
                                 {% endif %}
+                                {% with imgs=project.project.images.all atts=project.project.attachments.all %}
+                                    {% if imgs or atts %}
+                                        <p class="card-text mt-2 mb-0">
+                                            <small class="text-muted">
+                                                {% if imgs %}🖼 {{ imgs|length }} 张图片{% endif %}
+                                                {% if atts %}<span class="ms-2">📎 {{ atts|length }} 个附件</span>{% endif %}
+                                            </small>
+                                        </p>
+                                    {% endif %}
+                                {% endwith %}
                             </div>
                             <div class="card-footer bg-transparent d-flex justify-content-between align-items-center">
                                 {% if project.submitted %}

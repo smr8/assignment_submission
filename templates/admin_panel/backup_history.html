@@ -14,14 +14,26 @@
         </nav>
 
         <div class="card shadow">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h4 class="mb-0">📋 备份历史</h4>
-                <div>
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h4 class="mb-0">📋 备份历史 <small class="text-muted fs-6">共 {{ total_count }} 条</small></h4>
+                <div class="d-flex gap-2">
                     <a href="{% url 'admin_panel:settings' %}" class="btn btn-secondary btn-sm">返回设置</a>
                     <a href="{% url 'admin_panel:restore' %}" class="btn btn-info btn-sm text-white">♻️ 从备份恢复</a>
                 </div>
             </div>
+
             <div class="card-body">
+                <div class="btn-group btn-group-sm mb-3" role="group">
+                    <a href="{% url 'admin_panel:backup_history' %}"
+                       class="btn {% if not selected_status %}btn-primary{% else %}btn-outline-primary{% endif %}">全部</a>
+                    <a href="{% url 'admin_panel:backup_history' %}?status=success"
+                       class="btn {% if selected_status == 'success' %}btn-primary{% else %}btn-outline-primary{% endif %}">成功</a>
+                    <a href="{% url 'admin_panel:backup_history' %}?status=partial"
+                       class="btn {% if selected_status == 'partial' %}btn-primary{% else %}btn-outline-primary{% endif %}">部分成功</a>
+                    <a href="{% url 'admin_panel:backup_history' %}?status=failed"
+                       class="btn {% if selected_status == 'failed' %}btn-primary{% else %}btn-outline-primary{% endif %}">失败</a>
+                </div>
+
                 {% if records %}
                 <div class="table-responsive">
                     <table class="table table-hover align-middle">
@@ -42,7 +54,7 @@
                         <tbody>
                             {% for record in records %}
                             <tr>
-                                <td>{{ record.created_at|date:"Y-m-d H:i:s" }}</td>
+                                <td class="text-nowrap">{{ record.created_at|date:"Y-m-d H:i:s" }}</td>
                                 <td><span class="badge bg-secondary">{{ record.backend_type }}</span></td>
                                 <td>
                                     {% if record.status == 'success' %}
@@ -70,10 +82,20 @@
                                     {% endif %}
                                 </td>
                                 <td>{{ record.duration_seconds }}s</td>
-                                <td><code class="text-muted small">{{ record.backup_prefix }}</code></td>
+                                <td>
+                                    {% if record.backup_prefix %}
+                                        <code class="text-muted small">{{ record.backup_prefix }}</code>
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
                                 <td>
                                     {% if record.error_message %}
-                                        <button type="button" class="btn btn-outline-warning btn-sm" data-bs-toggle="popover" data-bs-trigger="focus" title="错误信息" data-bs-content="{{ record.error_message|truncatechars:500 }}">⚠️ 查看</button>
+                                        <button type="button" class="btn btn-outline-warning btn-sm js-error"
+                                                data-error="{{ record.error_message|escapejs }}"
+                                                data-time="{{ record.created_at|date:'Y-m-d H:i:s' }}">
+                                            ⚠️ 查看错误
+                                        </button>
                                     {% else %}
                                         <span class="text-muted">—</span>
                                     {% endif %}
@@ -83,10 +105,35 @@
                         </tbody>
                     </table>
                 </div>
+
+                {% if page_obj.paginator.num_pages > 1 %}
+                    <nav>
+                        <ul class="pagination pagination-sm justify-content-center mb-0">
+                            <li class="page-item {% if not page_obj.has_previous %}disabled{% endif %}">
+                                {% if page_obj.has_previous %}
+                                    <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if selected_status %}&status={{ selected_status }}{% endif %}">上一页</a>
+                                {% else %}
+                                    <span class="page-link">上一页</span>
+                                {% endif %}
+                            </li>
+                            <li class="page-item disabled">
+                                <span class="page-link">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+                            </li>
+                            <li class="page-item {% if not page_obj.has_next %}disabled{% endif %}">
+                                {% if page_obj.has_next %}
+                                    <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if selected_status %}&status={{ selected_status }}{% endif %}">下一页</a>
+                                {% else %}
+                                    <span class="page-link">下一页</span>
+                                {% endif %}
+                            </li>
+                        </ul>
+                    </nav>
+                {% endif %}
+
                 {% else %}
                 <div class="text-center py-5 text-muted">
                     <h5>暂无备份记录</h5>
-                    <p class="mb-3">点击"立即备份"创建第一个备份</p>
+                    <p class="mb-3">点击「立即备份」创建第一个备份；若备份未执行，这里也会留下失败记录。</p>
                     <a href="{% url 'admin_panel:settings' %}" class="btn btn-primary">前往设置</a>
                 </div>
                 {% endif %}
@@ -95,13 +142,34 @@
     </div>
 </div>
 
+<!-- 错误详情 -->
+<div class="modal fade" id="errorModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">⚠️ 备份错误详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-2" id="errorModalTime"></p>
+                <pre class="mb-0" style="white-space: pre-wrap;" id="errorModalBody"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
 <script>
-// 初始化 popover
-document.addEventListener('DOMContentLoaded', function() {
-    var popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'));
-    popoverTriggerList.map(function (popoverTriggerEl) {
-        return new bootstrap.Popover(popoverTriggerEl);
+    const errorModalEl = document.getElementById('errorModal');
+    const errorModal = errorModalEl ? new bootstrap.Modal(errorModalEl) : null;
+
+    document.querySelectorAll('.js-error').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            document.getElementById('errorModalBody').textContent = btn.dataset.error || '';
+            document.getElementById('errorModalTime').textContent = '备份时间：' + (btn.dataset.time || '');
+            if (errorModal) errorModal.show();
+        });
     });
-});
 </script>
 {% endblock %}

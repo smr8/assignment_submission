@@ -12,6 +12,7 @@ urlpatterns = [
 
     # 统计与导出
     path("stats/", views.stats_view, name="stats"),
+    path("stats/project/<int:pk>/", views.project_stats_detail_view, name="project_stats_detail"),
     path("export/csv/", views.export_csv_view, name="export_csv"),
 
     # 项目管理（自建 CRUD）

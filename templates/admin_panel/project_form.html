@@ -1,10 +1,31 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}{{ title }} - 管理后台{% endblock %}
 
+{% block extra_head %}
+<style>
+    .asset-thumb {
+        width: 100%;
+        height: 120px;
+        object-fit: cover;
+        border-radius: .5rem;
+        background: #f1f3f5;
+        cursor: zoom-in;
+    }
+    .asset-tile {
+        border: 1px solid #e9ecef;
+        border-radius: .5rem;
+        padding: .75rem;
+        background: #fbfbfc;
+        height: 100%;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-8">
+    <div class="col-md-9">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
                 <li class="breadcrumb-item"><a href="{% url 'admin_panel:dashboard' %}">管理后台</a></li>
@@ -18,7 +39,7 @@
                 <h4 class="mb-0">{{ title }}</h4>
             </div>
             <div class="card-body">
-                <form method="post">
+                <form method="post" enctype="multipart/form-data" id="projectForm">
                     {% csrf_token %}
                     <div class="mb-3">
                         <label class="form-label">项目名称</label>
@@ -31,8 +52,88 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">描述</label>
-                        <textarea name="description" class="form-control" rows="3">{{ form_values.description }}</textarea>
+                        <textarea name="description" class="form-control" rows="4">{{ form_values.description }}</textarea>
                     </div>
+
+                    <!-- ===================== 作业图片 ===================== -->
+                    <hr>
+                    <h5 class="mb-3">🖼 作业图片（图片 + 描述）</h5>
+
+                    {% if images %}
+                        <p class="text-muted small mb-2">已有图片：可修改描述，或勾选「删除」移除。</p>
+                        <div class="row g-3 mb-3">
+                            {% for image in images %}
+                                <div class="col-md-4">
+                                    <div class="asset-tile">
+                                        <img src="{{ image.image.url }}" alt="{{ image.caption }}"
+                                             class="asset-thumb mb-2 js-preview"
+                                             data-src="{{ image.image.url }}"
+                                             data-caption="{{ image.caption }}">
+                                        <textarea name="image_caption_{{ image.pk }}" class="form-control form-control-sm"
+                                                  rows="2" placeholder="图片描述">{{ image.caption }}</textarea>
+                                        <div class="form-check mt-2">
+                                            <input class="form-check-input" type="checkbox"
+                                                   name="image_delete" value="{{ image.pk }}"
+                                                   id="imgdel{{ image.pk }}">
+                                            <label class="form-check-label small text-danger" for="imgdel{{ image.pk }}">
+                                                删除这张图片
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+
+                    <div class="mb-4">
+                        <label class="form-label">
+                            {% if images %}继续添加图片{% else %}上传图片{% endif %}
+                            <small class="text-muted">（可多选，支持 {{ image_extensions }}）</small>
+                        </label>
+                        <input type="file" name="image_files" id="newImages" class="form-control"
+                               accept="image/*" multiple>
+                        <div class="row g-3 mt-1" id="newImagePreview"></div>
+                    </div>
+
+                    <!-- ===================== 作业附件 ===================== -->
+                    <hr>
+                    <h5 class="mb-3">📎 作业附件（可下载）</h5>
+
+                    {% if attachments %}
+                        <ul class="list-group mb-3">
+                            {% for attachment in attachments %}
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <span class="text-truncate me-3">
+                                        📄 {{ attachment.display_name }}
+                                        <small class="text-muted ms-1">{{ attachment.file_size|filesizeformat }}</small>
+                                    </span>
+                                    <span class="d-flex align-items-center gap-3 flex-shrink-0">
+                                        <a href="{% url 'download_attachment' attachment.pk %}"
+                                           class="btn btn-sm btn-outline-success">📥 下载</a>
+                                        <span class="form-check mb-0">
+                                            <input class="form-check-input" type="checkbox"
+                                                   name="attachment_delete" value="{{ attachment.pk }}"
+                                                   id="attdel{{ attachment.pk }}">
+                                            <label class="form-check-label small text-danger" for="attdel{{ attachment.pk }}">
+                                                删除
+                                            </label>
+                                        </span>
+                                    </span>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+
+                    <div class="mb-4">
+                        <label class="form-label">
+                            {% if attachments %}继续添加附件{% else %}上传附件{% endif %}
+                            <small class="text-muted">（可多选，任意格式）</small>
+                        </label>
+                        <input type="file" name="attachment_files" id="newAttachments" class="form-control" multiple>
+                        <ul class="list-group mt-2 d-none" id="newAttachmentList"></ul>
+                    </div>
+
+                    <hr>
                     <div class="mb-3">
                         <label class="form-label">重命名模板</label>
                         <input type="text" name="rename_pattern" class="form-control" value="{{ form_values.rename_pattern }}">
@@ -71,6 +172,7 @@
                         <input class="form-check-input" type="checkbox" name="auto_rename" id="auto_rename" {% if form_values.auto_rename %}checked{% endif %}>
                         <label class="form-check-label" for="auto_rename">启用自动重命名</label>
                     </div>
+
                     <div class="d-grid gap-2">
                         <button type="submit" class="btn btn-primary btn-lg">💾 保存</button>
                     </div>
@@ -79,4 +181,90 @@
         </div>
     </div>
 </div>
+
+<!-- 图片预览 -->
+<div class="modal fade" id="previewModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="previewCaption">图片预览</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center">
+                <img id="previewImage" src="" alt="" class="img-fluid rounded">
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // 新增图片：为每张选中的图片生成预览 + 描述输入框（name=image_captions，按顺序对齐）
+    const newImages = document.getElementById('newImages');
+    const newImagePreview = document.getElementById('newImagePreview');
+
+    newImages.addEventListener('change', function () {
+        newImagePreview.innerHTML = '';
+        Array.prototype.forEach.call(newImages.files, function (file, index) {
+            const col = document.createElement('div');
+            col.className = 'col-md-4';
+
+            const tile = document.createElement('div');
+            tile.className = 'asset-tile';
+
+            const img = document.createElement('img');
+            img.className = 'asset-thumb mb-2';
+            img.src = URL.createObjectURL(file);
+            img.alt = file.name;
+            img.addEventListener('load', () => URL.revokeObjectURL(img.src));
+
+            const name = document.createElement('div');
+            name.className = 'small text-muted text-truncate mb-1';
+            name.textContent = file.name;
+
+            const caption = document.createElement('textarea');
+            caption.className = 'form-control form-control-sm';
+            caption.rows = 2;
+            caption.name = 'image_captions';
+            caption.placeholder = '图片描述（会显示在学生提交页）';
+
+            tile.appendChild(img);
+            tile.appendChild(name);
+            tile.appendChild(caption);
+            col.appendChild(tile);
+            newImagePreview.appendChild(col);
+        });
+    });
+
+    // 新增附件：列出文件名，让管理员确认选中的文件
+    const newAttachments = document.getElementById('newAttachments');
+    const newAttachmentList = document.getElementById('newAttachmentList');
+
+    newAttachments.addEventListener('change', function () {
+        newAttachmentList.innerHTML = '';
+        if (!newAttachments.files.length) {
+            newAttachmentList.classList.add('d-none');
+            return;
+        }
+        Array.prototype.forEach.call(newAttachments.files, function (file) {
+            const li = document.createElement('li');
+            li.className = 'list-group-item py-2 small';
+            li.textContent = '📄 ' + file.name + '  (' + (file.size / 1024).toFixed(1) + ' KB)';
+            newAttachmentList.appendChild(li);
+        });
+        newAttachmentList.classList.remove('d-none');
+    });
+
+    // 图片点击放大
+    const previewModalEl = document.getElementById('previewModal');
+    const previewModal = previewModalEl ? new bootstrap.Modal(previewModalEl) : null;
+    document.querySelectorAll('.js-preview').forEach(function (img) {
+        img.addEventListener('click', function () {
+            document.getElementById('previewImage').src = img.dataset.src;
+            document.getElementById('previewCaption').textContent = img.dataset.caption || '图片预览';
+            if (previewModal) previewModal.show();
+        });
+    });
+</script>
 {% endblock %}

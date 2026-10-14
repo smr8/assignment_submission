@@ -96,3 +96,27 @@ STORAGE_BACKENDS = {
         "OPTIONS": {"location": str(MEDIA_ROOT)},
     },
 }
+
+# ---------------------------------------------------------------------------
+# 上传限制 / 分片上传
+# ---------------------------------------------------------------------------
+# 大文件不再整包上传：前端把文件切成 CHUNK_UPLOAD_SIZE 大小的分片逐个发送，
+# 单次请求体因此恒定为分片大小，不会被请求体上限卡住。
+#
+# 关于下面两个限制的实际情况（已实测确认）：
+#   * DATA_UPLOAD_MAX_MEMORY_SIZE 只在读取「原始请求体」(request.body) 时校验，
+#     multipart/form-data 的文件上传走 MultiPartParser，不经过这个校验；
+#   * FILE_UPLOAD_MAX_MEMORY_SIZE 只决定上传内容放内存还是落临时文件，不是上限。
+#   * 真正容易卡住大文件的是反向代理，例如 nginx 默认 client_max_body_size 1m。
+#     若部署在 nginx 后面，请把 client_max_body_size 调到不小于 CHUNK_UPLOAD_SIZE。
+DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024 * 1024          # 64 MB（原始请求体上限）
+FILE_UPLOAD_MAX_MEMORY_SIZE = 8 * 1024 * 1024           # 8 MB 以上直接落盘，不进内存
+
+# 客户端切片大小（字节）
+CHUNK_UPLOAD_SIZE = 4 * 1024 * 1024                     # 4 MB
+
+# 分片临时存放目录（相对 MEDIA_ROOT）
+CHUNK_UPLOAD_TMP_DIR = "_chunk_uploads"
+
+# 允许上传为「作业图片」的扩展名
+PROJECT_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]

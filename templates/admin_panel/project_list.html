@@ -27,6 +27,7 @@
                             <th>状态</th>
                             <th>自动重命名</th>
                             <th>存储后端</th>
+                            <th>资料</th>
                             <th>截止时间</th>
                             <th>操作</th>
                         </tr>
@@ -53,6 +54,16 @@
                                 </td>
                                 <td>{{ p.get_storage_backend_display }}</td>
                                 <td>
+                                    {% with imgs=p.images.all atts=p.attachments.all %}
+                                        {% if imgs or atts %}
+                                            <span class="badge bg-light text-dark border">🖼 {{ imgs|length }}</span>
+                                            <span class="badge bg-light text-dark border">📎 {{ atts|length }}</span>
+                                        {% else %}
+                                            <span class="text-muted small">—</span>
+                                        {% endif %}
+                                    {% endwith %}
+                                </td>
+                                <td>
                                     {% if p.deadline %}
                                         {{ p.deadline|date:"Y-m-d H:i" }}
                                     {% else %}
@@ -60,6 +71,7 @@
                                     {% endif %}
                                 </td>
                                 <td>
+                                    <a href="{% url 'admin_panel:project_stats_detail' p.id %}" class="btn btn-sm btn-outline-info">统计</a>
                                     <a href="{% url 'admin_panel:project_edit' p.id %}" class="btn btn-sm btn-warning">编辑</a>
                                     <a href="{% url 'admin_panel:project_delete' p.id %}" class="btn btn-sm btn-danger" onclick="return confirm('确定删除「{{ p.name }}」？所有相关提交记录也会被删除！')">删除</a>
                                 </td>
