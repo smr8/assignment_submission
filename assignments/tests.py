@@ -1,19 +1,22 @@
-"""回归测试：分片上传、项目资料（图片/附件）、统计明细、备份记录"""
+"""回归测试：分片上传、项目资料（图片/附件）、统计明细、备份记录、标识校验、归档"""
 import json
 import os
 import shutil
 import tempfile
+from datetime import timedelta
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from accounts.models import User
 
 from .models import BackupRecord, Project, ProjectAttachment, ProjectImage, Submission
 
 TEMP_MEDIA = tempfile.mkdtemp(prefix="assignment_test_media_")
+TEMP_MEDIA_ARCHIVE = tempfile.mkdtemp(prefix="assignment_test_media_archive_")
 
 
 @override_settings(MEDIA_ROOT=TEMP_MEDIA, DATA_UPLOAD_MAX_MEMORY_SIZE=1024 * 1024)
@@ -270,3 +273,175 @@ class FeatureTests(TestCase):
 
         page = self.client.get(reverse("admin_panel:backup_history") + "?status=success")
         self.assertNotContains(page, "boom")
+
+
+class ProjectSlugValidationTests(TestCase):
+    """标识框必须拦下中文：新建与编辑都不能让中文 slug 入库"""
+
+    def setUp(self):
+        self.staff = User.objects.create_user(
+            student_id="admin", name="管理员", password="pass12345", is_staff=True
+        )
+        self.client.force_login(self.staff)
+
+    def _payload(self, **overrides):
+        data = {
+            "name": "第一次作业",
+            "slug": "hw1",
+            "description": "",
+            "rename_pattern": "{student_id} {name}{ext}",
+            "storage_backend": "local",
+            "max_file_size": "50",
+            "allowed_extensions": "",
+            "deadline": "",
+            "is_active": "on",
+            "auto_rename": "on",
+        }
+        data.update(overrides)
+        return data
+
+    def test_create_rejects_chinese_slug(self):
+        response = self.client.post(
+            reverse("admin_panel:project_create"), self._payload(slug="第一次作业")
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Project.objects.filter(name="第一次作业").exists())
+        self.assertContains(response, "包含中文或全角字符")
+        # 输入原样回填，管理员不必重打
+        self.assertContains(response, 'value="第一次作业"')
+
+    def test_create_rejects_other_illegal_slugs(self):
+        for slug in ["作业。一", "hw 1", "hw1/2", "ｈｗ１", "hw#1"]:
+            with self.subTest(slug=slug):
+                response = self.client.post(
+                    reverse("admin_panel:project_create"), self._payload(slug=slug)
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertFalse(Project.objects.exists())
+
+    def test_create_accepts_ascii_slug(self):
+        response = self.client.post(
+            reverse("admin_panel:project_create"), self._payload(slug="hw-01_test")
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Project.objects.filter(slug="hw-01_test").exists())
+
+    def test_create_rejects_duplicate_slug(self):
+        Project.objects.create(name="已有项目", slug="hw1")
+        response = self.client.post(
+            reverse("admin_panel:project_create"), self._payload(name="另一个项目")
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "已被项目")
+        self.assertEqual(Project.objects.count(), 1)
+
+    def test_edit_rejects_chinese_slug_and_keeps_original(self):
+        project = Project.objects.create(name="原项目", slug="hw-old")
+        response = self.client.post(
+            reverse("admin_panel:project_edit", args=[project.pk]),
+            self._payload(name="改个名", slug="新标识"),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "包含中文或全角字符")
+        project.refresh_from_db()
+        self.assertEqual(project.slug, "hw-old")
+        self.assertEqual(project.name, "原项目")
+
+
+@override_settings(MEDIA_ROOT=TEMP_MEDIA_ARCHIVE)
+class ProjectArchiveTests(TestCase):
+    """归档：学生端隐藏 + 停止接收提交，但记录与文件全部保留，可恢复"""
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEMP_MEDIA_ARCHIVE, ignore_errors=True)
+
+    def setUp(self):
+        self.student = User.objects.create_user(
+            student_id="2024001", name="张三", password="pass12345"
+        )
+        self.staff = User.objects.create_user(
+            student_id="admin", name="管理员", password="pass12345", is_staff=True
+        )
+        self.project = Project.objects.create(name="旧作业", slug="hw-old", is_active=True)
+
+    def test_archive_hides_from_students_but_keeps_submission(self):
+        submission = Submission.objects.create(
+            project=self.project, student=self.student,
+            file=SimpleUploadedFile("作业.txt", b"hello"),
+            original_filename="作业.txt", file_size=5,
+        )
+
+        self.client.force_login(self.staff)
+        response = self.client.post(
+            reverse("admin_panel:project_archive", args=[self.project.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+
+        self.project.refresh_from_db()
+        self.assertIsNotNone(self.project.archived_at)
+        self.assertTrue(Project.objects.filter(pk=submission.project_id).exists())
+        self.assertTrue(Submission.objects.filter(pk=submission.pk).exists())
+
+        # 管理端：默认列表不含，已归档列表可见
+        # （先渲染一次后台首页，把「已归档」的 flash 消息消费掉，避免串到后面的断言里）
+        self.client.get(reverse("admin_panel:dashboard"))
+        self.assertNotContains(self.client.get(reverse("admin_panel:project_list")), "旧作业")
+        archived_page = self.client.get(reverse("admin_panel:project_list") + "?scope=archived")
+        self.assertContains(archived_page, "旧作业")
+        self.assertContains(archived_page, "已归档")
+
+        # 学生端：首页不再显示，提交页 404，分片上传也拒绝
+        self.client.force_login(self.student)
+        self.assertNotContains(self.client.get(reverse("home")), "旧作业")
+        self.assertEqual(
+            self.client.get(reverse("submit_project", args=["hw-old"])).status_code, 404
+        )
+        upload = self.client.post(reverse("chunk_upload"), {
+            "upload_id": "archivedtest",
+            "chunk_index": "0",
+            "total_chunks": "1",
+            "filename": "a.txt",
+            "file_size": "1",
+            "project": "hw-old",
+            "chunk": SimpleUploadedFile("chunk", b"x"),
+        })
+        self.assertEqual(upload.status_code, 404)
+
+        # 恢复后学生端重新可见
+        self.client.force_login(self.staff)
+        self.client.post(reverse("admin_panel:project_unarchive", args=[self.project.pk]))
+        self.project.refresh_from_db()
+        self.assertIsNone(self.project.archived_at)
+
+        self.client.force_login(self.student)
+        self.assertContains(self.client.get(reverse("home")), "旧作业")
+
+    def test_archive_requires_post(self):
+        self.client.force_login(self.staff)
+        response = self.client.get(reverse("admin_panel:project_archive", args=[self.project.pk]))
+        self.assertEqual(response.status_code, 405)
+        self.project.refresh_from_db()
+        self.assertIsNone(self.project.archived_at)
+
+    def test_bulk_archive_only_touches_expired(self):
+        old = Project.objects.create(
+            name="已截止", slug="old", deadline=timezone.now() - timedelta(days=1)
+        )
+        future = Project.objects.create(
+            name="进行中", slug="new", deadline=timezone.now() + timedelta(days=1)
+        )
+        undated = Project.objects.create(name="无截止", slug="none")
+
+        self.client.force_login(self.staff)
+        response = self.client.post(reverse("admin_panel:project_archive_finished"))
+        self.assertEqual(response.status_code, 302)
+
+        old.refresh_from_db()
+        future.refresh_from_db()
+        undated.refresh_from_db()
+        self.assertIsNotNone(old.archived_at)
+        self.assertIsNone(future.archived_at)
+        self.assertIsNone(undated.archived_at)
+        self.assertIsNone(self.project.archived_at)

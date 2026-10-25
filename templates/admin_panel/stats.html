@@ -37,6 +37,14 @@
             <small class="text-muted">点击项目卡片可查看未交名单</small>
         </div>
 
+        {% if archived_projects %}
+            <div class="alert alert-light border py-2 small">
+                🗄 有 <strong>{{ archived_projects }}</strong> 个已归档项目未计入下方统计，可在
+                <a href="{% url 'admin_panel:project_list' %}?scope=archived">项目管理 · 已归档</a>
+                中查看其提交明细。
+            </div>
+        {% endif %}
+
         <div class="row g-4 mb-4">
             {% for stat in project_stats %}
                 <div class="col-md-4">

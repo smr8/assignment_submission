@@ -46,9 +46,16 @@
                         <input type="text" name="name" class="form-control" value="{{ form_values.name }}" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">标识 (slug)</label>
-                        <input type="text" name="slug" class="form-control" value="{{ form_values.slug }}" required>
-                        <div class="form-text">用于 URL 和文件目录，只能包含字母、数字、中划线和下划线</div>
+                        <label class="form-label" for="projectSlug">标识 (slug)</label>
+                        <input type="text" name="slug" id="projectSlug"
+                               class="form-control {% if slug_error %}is-invalid{% endif %}"
+                               value="{{ form_values.slug }}" required maxlength="128"
+                               pattern="[A-Za-z0-9_\-]+" autocomplete="off" spellcheck="false"
+                               aria-describedby="slugHelp">
+                        <div class="form-text" id="slugHelp">
+                            用于 URL 和文件目录，只能包含英文字母、数字、中划线和下划线，<strong>不能输入中文</strong>。
+                        </div>
+                        <div class="invalid-feedback" id="slugFeedback">{% if slug_error %}{{ slug_error }}{% endif %}</div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">描述</label>
@@ -200,6 +207,50 @@
 
 {% block extra_js %}
 <script>
+    // 标识实时校验：中文 / 全角字符 / 空格等非法字符在提交前就拦下，
+    // 后端 validate_project_slug() 还会再校验一次，两边规则保持一致。
+    const projectForm = document.getElementById('projectForm');
+    const slugInput = document.getElementById('projectSlug');
+    const slugFeedback = document.getElementById('slugFeedback');
+    const SLUG_CJK_RE = /[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/;
+    const SLUG_VALID_RE = /^[A-Za-z0-9_-]+$/;
+
+    function slugMessage(value) {
+        if (!value) {
+            return '标识不能为空。';
+        }
+        if (SLUG_CJK_RE.test(value)) {
+            return '标识不能包含中文或全角字符，只能使用英文字母、数字、中划线和下划线。';
+        }
+        if (!SLUG_VALID_RE.test(value)) {
+            return '标识只能包含英文字母、数字、中划线和下划线，不能有空格或其他符号。';
+        }
+        return '';
+    }
+
+    function checkSlug() {
+        const trimmed = slugInput.value.trim();
+        if (trimmed !== slugInput.value) {
+            slugInput.value = trimmed;
+        }
+        const message = slugMessage(trimmed);
+        slugInput.setCustomValidity(message);
+        slugInput.classList.toggle('is-invalid', Boolean(message));
+        slugFeedback.textContent = message;
+        return !message;
+    }
+
+    if (slugInput) {
+        slugInput.addEventListener('input', checkSlug);
+        slugInput.addEventListener('blur', checkSlug);
+        projectForm.addEventListener('submit', function (event) {
+            if (!checkSlug()) {
+                event.preventDefault();
+                slugInput.focus();
+            }
+        });
+    }
+
     // 新增图片：为每张选中的图片生成预览 + 描述输入框（name=image_captions，按顺序对齐）
     const newImages = document.getElementById('newImages');
     const newImagePreview = document.getElementById('newImagePreview');

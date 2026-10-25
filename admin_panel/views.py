@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import os
+import re
 import zipfile
 from datetime import timedelta
 
@@ -12,6 +13,7 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -43,7 +45,9 @@ def dashboard_view(request):
     total_submissions = Submission.objects.count()
     total_students = User.objects.filter(is_staff=False, is_active=True).count()
 
-    projects = Project.objects.all()
+    # 已归档项目不再参与「各项目提交率」与平均提交率，避免历史项目把当前数据拉低
+    projects = Project.objects.active()
+    archived_projects = Project.objects.archived().count()
     project_bars = []
     rates = []
     for project in projects:
@@ -74,6 +78,7 @@ def dashboard_view(request):
         "avg_rate": avg_rate,
         "pending_review": pending_review,
         "overdue_reviews": overdue_reviews,
+        "archived_projects": archived_projects,
         "project_bars": project_bars,
         "recent_submissions": recent_submissions,
     })
@@ -114,7 +119,7 @@ def settings_view(request):
 
 @staff_member_required
 def stats_view(request):
-    projects = Project.objects.all().prefetch_related("images", "attachments")
+    projects = Project.objects.active().prefetch_related("images", "attachments")
     project_stats = []
     total_students = User.objects.filter(is_staff=False, is_active=True).count()
 
@@ -130,7 +135,10 @@ def stats_view(request):
             "is_expired": project.deadline and timezone.now() > project.deadline,
         })
 
-    return render(request, "admin_panel/stats.html", {"project_stats": project_stats})
+    return render(request, "admin_panel/stats.html", {
+        "project_stats": project_stats,
+        "archived_projects": Project.objects.archived().count(),
+    })
 
 
 @staff_member_required
@@ -205,49 +213,185 @@ def export_csv_view(request):
 
 # ==================== 项目管理（自建 CRUD） ====================
 
+# 标识只允许 ASCII 字母、数字、中划线、下划线（Django SlugField 的默认规则）
+SLUG_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+# 中文、中文标点、全角字符：这些字符会带进 URL 与文件目录，必须在入库前拦下
+CJK_PATTERN = re.compile(r"[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
+
+DEFAULT_RENAME_PATTERN = "{student_id} {name}{ext}"
+
+
+def validate_project_slug(slug, instance_pk=None):
+    """校验项目标识，返回错误提示（None 表示通过）。
+
+    ``Model.save()`` 不会触发字段校验，SlugField 的 ASCII 规则只有在
+    ``full_clean()`` 或 ModelForm 中才生效；项目管理是自建 CRUD，
+    因此必须显式校验，否则「第一次作业」这类中文标识会直接入库。
+    """
+    if not slug:
+        return "标识不能为空。"
+
+    if CJK_PATTERN.search(slug):
+        return (
+            f"标识「{slug}」包含中文或全角字符，不能保存。"
+            "标识只能使用英文字母、数字、中划线和下划线，例如 homework-01。"
+        )
+
+    if not SLUG_PATTERN.match(slug):
+        return f"标识「{slug}」含有不允许的字符，只能使用英文字母、数字、中划线和下划线（不能有空格）。"
+
+    max_length = Project._meta.get_field("slug").max_length
+    if len(slug) > max_length:
+        return f"标识过长，最多 {max_length} 个字符。"
+
+    qs = Project.objects.filter(slug=slug)
+    if instance_pk is not None:
+        qs = qs.exclude(pk=instance_pk)
+    occupied = qs.first()
+    if occupied is not None:
+        return f"标识「{slug}」已被项目「{occupied.name}」占用，请换一个。"
+
+    return None
+
+
+def _project_form_values(post):
+    """把表单输入整理成统一的字典，校验失败时用于原样回填"""
+    return {
+        "name": (post.get("name") or "").strip(),
+        "slug": (post.get("slug") or "").strip(),
+        "description": post.get("description", ""),
+        "rename_pattern": post.get("rename_pattern") or DEFAULT_RENAME_PATTERN,
+        "storage_backend": post.get("storage_backend", "local"),
+        "max_file_size": post.get("max_file_size") or "",
+        "deadline": post.get("deadline", ""),
+        "allowed_extensions": post.get("allowed_extensions", ""),
+        "is_active": post.get("is_active") == "on",
+        "auto_rename": post.get("auto_rename") == "on",
+    }
+
+
+def _validate_project_form(values, instance_pk=None):
+    """校验项目表单，返回 (错误列表, 标识错误, 文件大小, 截止时间)"""
+    errors = []
+    if not values["name"]:
+        errors.append("项目名称不能为空。")
+
+    slug_error = validate_project_slug(values["slug"], instance_pk=instance_pk)
+    if slug_error:
+        errors.append(slug_error)
+
+    try:
+        max_file_size = int(values["max_file_size"])
+        if max_file_size < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        max_file_size = 0
+        errors.append("最大文件大小必须是大于 0 的整数（单位 MB）。")
+
+    deadline = None
+    if values["deadline"]:
+        try:
+            deadline = timezone.datetime.fromisoformat(values["deadline"])
+        except ValueError:
+            errors.append("截止时间格式无法识别，请重新选择。")
+
+    return errors, slug_error, max_file_size, deadline
+
+
+def _render_project_form(request, title, form_values, errors=(), slug_error="",
+                         images=None, attachments=None):
+    for err in errors:
+        messages.error(request, err)
+    return render(request, "admin_panel/project_form.html", {
+        "title": title,
+        "form_values": form_values,
+        "slug_error": slug_error,
+        "images": images or [],
+        "attachments": attachments or [],
+        "image_extensions": ",".join(settings.PROJECT_IMAGE_EXTENSIONS),
+    })
+
+
+def _project_list_url(scope):
+    url = reverse("admin_panel:project_list")
+    if scope in ("active", "archived", "all"):
+        return f"{url}?scope={scope}"
+    return url
+
+
 @staff_member_required
 def project_list_view(request):
-    projects = Project.objects.all().prefetch_related("images", "attachments").order_by("-created_at")
-    return render(request, "admin_panel/project_list.html", {"projects": projects})
+    scope = request.GET.get("scope", "active")
+    if scope not in ("active", "archived", "all"):
+        scope = "active"
+
+    qs = Project.objects.all()
+    if scope == "active":
+        qs = qs.active()
+    elif scope == "archived":
+        qs = qs.archived()
+
+    projects = qs.prefetch_related("images", "attachments").order_by("-created_at")
+
+    expired_active_count = Project.objects.active().filter(
+        deadline__isnull=False, deadline__lt=timezone.now()
+    ).count()
+
+    return render(request, "admin_panel/project_list.html", {
+        "projects": projects,
+        "scope": scope,
+        "counts": {
+            "active": Project.objects.active().count(),
+            "archived": Project.objects.archived().count(),
+            "all": Project.objects.count(),
+        },
+        "expired_active_count": expired_active_count,
+    })
 
 
 @staff_member_required
 def project_create_view(request):
+    title = "新建作业项目"
+
     if request.method == "POST":
+        values = _project_form_values(request.POST)
+        errors, slug_error, max_file_size, deadline = _validate_project_form(values)
+        if errors:
+            # 校验不通过：不建项目，原样回填输入，避免管理员重打一遍
+            return _render_project_form(request, title, values, errors, slug_error)
+
         project = Project(
-            name=request.POST.get("name", ""),
-            slug=request.POST.get("slug", ""),
-            description=request.POST.get("description", ""),
-            is_active=request.POST.get("is_active") == "on",
-            auto_rename=request.POST.get("auto_rename") == "on",
-            rename_pattern=request.POST.get("rename_pattern", "{student_id} {name}{ext}"),
-            storage_backend=request.POST.get("storage_backend", "local"),
-            max_file_size=int(request.POST.get("max_file_size", 50)),
-            allowed_extensions=request.POST.get("allowed_extensions", ""),
+            name=values["name"],
+            slug=values["slug"],
+            description=values["description"],
+            is_active=values["is_active"],
+            auto_rename=values["auto_rename"],
+            rename_pattern=values["rename_pattern"],
+            storage_backend=values["storage_backend"],
+            max_file_size=max_file_size,
+            allowed_extensions=values["allowed_extensions"],
+            deadline=deadline,
         )
-        deadline_str = request.POST.get("deadline", "")
-        if deadline_str:
-            project.deadline = timezone.datetime.fromisoformat(deadline_str)
         project.save()
 
-        image_count, attachment_count, errors = _save_project_assets(project, request)
+        image_count, attachment_count, errs = _save_project_assets(project, request)
         msg = f"项目「{project.name}」已创建！"
         if image_count or attachment_count:
             msg += f"（新增 {image_count} 张图片、{attachment_count} 个附件）"
         messages.success(request, msg)
-        for err in errors:
+        for err in errs:
             messages.warning(request, err)
         if request.POST.get("_save_and_stay") == "1":
             return redirect("admin_panel:project_edit", pk=project.pk)
         return redirect("admin_panel:project_list")
 
     return render(request, "admin_panel/project_form.html", {
-        "title": "新建作业项目",
+        "title": title,
         "form_values": {
             "name": "",
             "slug": "",
             "description": "",
-            "rename_pattern": "{student_id} {name}{ext}",
+            "rename_pattern": DEFAULT_RENAME_PATTERN,
             "storage_backend": "local",
             "max_file_size": 50,
             "deadline": "",
@@ -255,6 +399,7 @@ def project_create_view(request):
             "is_active": True,
             "auto_rename": True,
         },
+        "slug_error": "",
         "images": [],
         "attachments": [],
         "image_extensions": ",".join(settings.PROJECT_IMAGE_EXTENSIONS),
@@ -264,35 +409,43 @@ def project_create_view(request):
 @staff_member_required
 def project_edit_view(request, pk):
     project = get_object_or_404(Project, pk=pk)
+    title = f"编辑：{project.name}"
+
     if request.method == "POST":
-        project.name = request.POST.get("name", project.name)
-        project.slug = request.POST.get("slug", project.slug)
-        project.description = request.POST.get("description", project.description)
-        project.is_active = request.POST.get("is_active") == "on"
-        project.auto_rename = request.POST.get("auto_rename") == "on"
-        project.rename_pattern = request.POST.get("rename_pattern", project.rename_pattern)
-        project.storage_backend = request.POST.get("storage_backend", project.storage_backend)
-        project.max_file_size = int(request.POST.get("max_file_size", project.max_file_size))
-        project.allowed_extensions = request.POST.get("allowed_extensions", project.allowed_extensions)
-        deadline_str = request.POST.get("deadline", "")
-        if deadline_str:
-            project.deadline = timezone.datetime.fromisoformat(deadline_str)
-        else:
-            project.deadline = None
+        values = _project_form_values(request.POST)
+        errors, slug_error, max_file_size, deadline = _validate_project_form(
+            values, instance_pk=project.pk
+        )
+        if errors:
+            return _render_project_form(
+                request, title, values, errors, slug_error,
+                images=project.images.all(), attachments=project.attachments.all(),
+            )
+
+        project.name = values["name"]
+        project.slug = values["slug"]
+        project.description = values["description"]
+        project.is_active = values["is_active"]
+        project.auto_rename = values["auto_rename"]
+        project.rename_pattern = values["rename_pattern"]
+        project.storage_backend = values["storage_backend"]
+        project.max_file_size = max_file_size
+        project.allowed_extensions = values["allowed_extensions"]
+        project.deadline = deadline
         project.save()
 
         _update_project_assets(project, request)
-        image_count, attachment_count, errors = _save_project_assets(project, request)
+        image_count, attachment_count, errs = _save_project_assets(project, request)
         msg = f"项目「{project.name}」已更新！"
         if image_count or attachment_count:
             msg += f"（新增 {image_count} 张图片、{attachment_count} 个附件）"
         messages.success(request, msg)
-        for err in errors:
+        for err in errs:
             messages.warning(request, err)
         return redirect("admin_panel:project_edit", pk=project.pk)
 
     return render(request, "admin_panel/project_form.html", {
-        "title": f"编辑：{project.name}",
+        "title": title,
         "form_values": {
             "name": project.name,
             "slug": project.slug,
@@ -305,10 +458,58 @@ def project_edit_view(request, pk):
             "is_active": project.is_active,
             "auto_rename": project.auto_rename,
         },
+        "slug_error": "",
         "images": project.images.all(),
         "attachments": project.attachments.all(),
         "image_extensions": ",".join(settings.PROJECT_IMAGE_EXTENSIONS),
     })
+
+
+@staff_member_required
+@require_POST
+def project_archive_view(request, pk):
+    """归档项目：学生端隐藏、停止接收提交，提交记录与文件全部保留"""
+    project = get_object_or_404(Project, pk=pk)
+    if project.archived_at:
+        messages.info(request, f"项目「{project.name}」已经是归档状态。")
+    else:
+        project.archived_at = timezone.now()
+        project.save(update_fields=["archived_at", "updated_at"])
+        messages.success(
+            request,
+            f"项目「{project.name}」已归档：学生端不再显示，提交记录与文件保留，可随时恢复。",
+        )
+    return redirect(_project_list_url(request.POST.get("scope")))
+
+
+@staff_member_required
+@require_POST
+def project_unarchive_view(request, pk):
+    """恢复归档项目"""
+    project = get_object_or_404(Project, pk=pk)
+    if not project.archived_at:
+        messages.info(request, f"项目「{project.name}」未处于归档状态。")
+    else:
+        project.archived_at = None
+        project.save(update_fields=["archived_at", "updated_at"])
+        messages.success(request, f"项目「{project.name}」已恢复，学生端重新可见。")
+    return redirect(_project_list_url(request.POST.get("scope")))
+
+
+@staff_member_required
+@require_POST
+def project_archive_finished_view(request):
+    """批量归档：只处理已过截止时间且尚未归档的项目"""
+    now = timezone.now()
+    qs = Project.objects.active().filter(deadline__isnull=False, deadline__lt=now)
+    count = qs.count()
+    if count:
+        qs.update(archived_at=now, updated_at=now)
+        messages.success(request, f"已归档 {count} 个截止时间已过的项目。")
+        return redirect(_project_list_url("archived"))
+    messages.info(request, "没有需要归档的项目（只归档已过截止时间且未归档的项目）。")
+    return redirect(_project_list_url("active"))
+
 
 
 def _save_project_assets(project, request):

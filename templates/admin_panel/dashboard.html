@@ -14,7 +14,7 @@
                     <div class="card-body">
                         <h6 class="card-subtitle mb-2 opacity-75">总项目数</h6>
                         <h3 class="card-title mb-0">{{ total_projects }}</h3>
-                        <small>本学期</small>
+                        <small>{% if archived_projects %}已归档 {{ archived_projects }} 个{% else %}本学期{% endif %}</small>
                     </div>
                 </div>
             </div>
@@ -64,6 +64,9 @@
                 <div class="card shadow-sm">
                     <div class="card-header bg-white">
                         <h5 class="mb-0">各项目提交率</h5>
+                        {% if archived_projects %}
+                            <small class="text-muted">已归档的 {{ archived_projects }} 个项目不计入</small>
+                        {% endif %}
                     </div>
                     <div class="card-body">
                         {% for stat in project_bars %}

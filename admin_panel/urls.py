@@ -18,7 +18,10 @@ urlpatterns = [
     # 项目管理（自建 CRUD）
     path("projects/", views.project_list_view, name="project_list"),
     path("projects/create/", views.project_create_view, name="project_create"),
+    path("projects/archive-finished/", views.project_archive_finished_view, name="project_archive_finished"),
     path("projects/<int:pk>/edit/", views.project_edit_view, name="project_edit"),
+    path("projects/<int:pk>/archive/", views.project_archive_view, name="project_archive"),
+    path("projects/<int:pk>/unarchive/", views.project_unarchive_view, name="project_unarchive"),
     path("projects/<int:pk>/delete/", views.project_delete_view, name="project_delete"),
 
     # 提交记录管理

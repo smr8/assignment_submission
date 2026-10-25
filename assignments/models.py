@@ -11,6 +11,16 @@ def submission_upload_to(instance, filename):
     return os.path.join(project_slug, filename)
 
 
+class ProjectQuerySet(models.QuerySet):
+    def active(self):
+        """未归档的项目（正常使用中）"""
+        return self.filter(archived_at__isnull=True)
+
+    def archived(self):
+        """已归档的项目（学生端隐藏，提交记录保留）"""
+        return self.filter(archived_at__isnull=False)
+
+
 class Project(models.Model):
     """作业项目 — 管理员在后台创建"""
     name = models.CharField("项目名称", max_length=128)
@@ -53,6 +63,17 @@ class Project(models.Model):
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
     updated_at = models.DateTimeField("更新时间", auto_now=True)
 
+    # 归档：非空即已归档 —— 学生端不再显示、不再接收提交，提交记录与文件全部保留
+    archived_at = models.DateTimeField(
+        "归档时间",
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="非空表示已归档：学生端不可见且无法提交，可随时恢复",
+    )
+
+    objects = ProjectQuerySet.as_manager()
+
     class Meta:
         verbose_name = "作业项目"
         verbose_name_plural = verbose_name
@@ -60,6 +81,10 @@ class Project(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def is_archived(self):
+        return self.archived_at is not None
 
 
 def project_image_upload_to(instance, filename):

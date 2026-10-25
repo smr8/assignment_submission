@@ -5,8 +5,8 @@ from .models import BackupRecord, LiveSettings, Project, Submission
 
 @admin.register(Project)
 class ProjectAdmin(admin.ModelAdmin):
-    list_display = ("name", "slug", "is_active", "auto_rename", "storage_backend", "deadline", "created_at")
-    list_filter = ("is_active", "auto_rename", "storage_backend")
+    list_display = ("name", "slug", "is_active", "archived_at", "auto_rename", "storage_backend", "deadline", "created_at")
+    list_filter = ("is_active", "archived_at", "auto_rename", "storage_backend")
     search_fields = ("name", "slug")
     prepopulated_fields = {"slug": ("name",)}
 

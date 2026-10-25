@@ -28,7 +28,7 @@
                         <select name="project" class="form-select" id="projectSelect">
                             <option value="">全部项目（仅已提交）</option>
                             {% for p in filter_projects %}
-                                <option value="{{ p.id }}" {% if selected_project == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+                                <option value="{{ p.id }}" {% if selected_project == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}{% if p.is_archived %}（已归档）{% endif %}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -66,11 +66,14 @@
 
         {% if matrix_mode %}
             <!-- 矩阵模式：展示该项目下所有学生 -->
-            <div class="alert alert-info d-flex align-items-center">
+            <div class="alert alert-info d-flex align-items-center flex-wrap gap-2">
                 <span class="me-3">📊 项目「{{ project.name }}」提交情况：</span>
-                <span class="badge bg-success me-2">已提交 {{ submitted_count }}</span>
-                <span class="badge bg-warning text-dark me-2">未提交 {{ unsubmitted_count }}</span>
+                <span class="badge bg-success">已提交 {{ submitted_count }}</span>
+                <span class="badge bg-warning text-dark">未提交 {{ unsubmitted_count }}</span>
                 <span class="badge bg-secondary">共 {{ rows|length }} 人</span>
+                {% if project.is_archived %}
+                    <span class="badge bg-dark">🗄 已归档 · 学生端不可见</span>
+                {% endif %}
             </div>
 
             {% if rows %}

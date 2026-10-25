@@ -173,7 +173,7 @@ def chunk_upload_view(request):
         student = get_object_or_404(User, pk=student_pk, is_staff=False)
         success_url = reverse("admin_panel:submission_list")
     else:
-        project = get_object_or_404(Project, slug=target, is_active=True)
+        project = get_object_or_404(Project, slug=target, is_active=True, archived_at__isnull=True)
         student = request.user
         success_url = reverse("home")
 
@@ -273,7 +273,8 @@ def home_view(request):
     search = request.GET.get("search", "").strip()
 
     projects = (
-        Project.objects.filter(is_active=True)
+        Project.objects.active()
+        .filter(is_active=True)
         .prefetch_related("images", "attachments")
         .order_by("deadline")
     )
@@ -342,7 +343,9 @@ def home_view(request):
 @login_required
 def submit_project_view(request, slug):
     """作业提交页面（未启用 JS 时退化为一次性表单上传）"""
-    project = get_object_or_404(Project, slug=slug, is_active=True)
+    project = get_object_or_404(
+        Project, slug=slug, is_active=True, archived_at__isnull=True
+    )
     user = request.user
 
     existing_submission = Submission.objects.filter(project=project, student=user).first()
