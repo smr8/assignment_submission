@@ -175,7 +175,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             f"导入完成: 新增 {created} 人, 改名 {renamed} 人, 跳过 {skipped} 人"
         ))
-        self.stdout.write(f"学生总数: {User.objects.filter(is_staff=False).count()} 人")
+        self.stdout.write(f"班级成员总数: {User.objects.class_members().count()} 人")
 
     # ---------------- 解析 ----------------
 

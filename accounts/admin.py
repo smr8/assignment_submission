@@ -17,6 +17,7 @@ class UserAdmin(BaseUserAdmin):
                     "is_staff",
                     "is_admin",
                     "is_superuser",
+                    "is_class_member",
                     "groups",
                     "user_permissions",
                 ),
@@ -33,7 +34,8 @@ class UserAdmin(BaseUserAdmin):
             },
         ),
     )
-    list_display = ("student_id", "name", "is_staff", "is_active")
+    list_display = ("student_id", "name", "is_staff", "is_class_member", "is_active")
+    list_filter = ("is_staff", "is_class_member", "is_active")
     search_fields = ("student_id", "name")
     ordering = ("-created_at",)
     readonly_fields = ("created_at",)

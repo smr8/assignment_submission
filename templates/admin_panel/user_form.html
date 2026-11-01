@@ -37,6 +37,14 @@
                         <label class="form-check-label" for="is_staff">管理员权限</label>
                     </div>
                     <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" name="is_class_member" id="is_class_member" {% if form_values.is_class_member %}checked{% endif %}>
+                        <label class="form-check-label" for="is_class_member">计入班级统计</label>
+                        <div class="form-text">
+                            班上一员就勾选，管理员同样计入应交人数与提交名单。
+                            纯系统账号或外班 / 教师账号可取消勾选，不参与提交率统计。
+                        </div>
+                    </div>
+                    <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" name="is_active" id="is_active" {% if form_values.is_active %}checked{% endif %}>
                         <label class="form-check-label" for="is_active">激活状态</label>
                     </div>

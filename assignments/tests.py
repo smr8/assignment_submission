@@ -30,8 +30,10 @@ class FeatureTests(TestCase):
         self.student = User.objects.create_user(
             student_id="2024001", name="张三", password="pass12345"
         )
+        # 纯系统账号：有管理员权限但不对应班里的某个人，故不计入班级统计
         self.staff = User.objects.create_user(
-            student_id="admin", name="管理员", password="pass12345", is_staff=True
+            student_id="admin", name="管理员", password="pass12345",
+            is_staff=True, is_class_member=False,
         )
         self.project = Project.objects.create(
             name="第一次作业", slug="hw1", max_file_size=50,
@@ -239,6 +241,100 @@ class FeatureTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("text/csv", response["Content-Type"])
         self.assertIn("2024001", response.content.decode("utf-8-sig"))
+
+    # ---------- 班内成员口径：管理员也是班上一员 ----------
+
+    def _member_admin(self):
+        """既是管理员、又是班上一员的账号（如班委）"""
+        return User.objects.create_user(
+            student_id="2411001316", name="汤清如", password="pass12345", is_staff=True,
+        )
+
+    def test_admin_counts_in_stats(self):
+        """应交人数含管理员，管理员本人的提交也算进已交"""
+        member = self._member_admin()
+        Submission.objects.create(
+            project=self.project, student=member,
+            file=SimpleUploadedFile("汤清如.txt", b"x"),
+            original_filename="汤清如.txt", file_size=1,
+        )
+        self.client.force_login(self.staff)
+
+        page = self.client.get(reverse("admin_panel:stats"))
+        self.assertContains(page, "1 / 2")  # 张三未交 + 汤清如已交
+        self.assertContains(page, "50.0%")
+
+        detail = self.client.get(
+            reverse("admin_panel:project_stats_detail", args=[self.project.pk])
+        )
+        self.assertContains(detail, "汤清如")
+        self.assertContains(detail, "50.0%")
+
+    def test_non_member_excluded_from_stats(self):
+        """非班内成员（纯系统账号）不进入应交人数"""
+        self.client.force_login(self.staff)
+        page = self.client.get(reverse("admin_panel:stats"))
+        self.assertContains(page, "0 / 1")
+
+    def test_submission_list_lists_and_searches_admin(self):
+        """提交记录的名单里必须有管理员，按姓名 / 学号都搜得到"""
+        member = self._member_admin()
+        self.client.force_login(self.staff)
+        url = reverse("admin_panel:submission_list")
+
+        page = self.client.get(f"{url}?project={self.project.pk}")
+        self.assertContains(page, "汤清如")
+        self.assertContains(page, "共 2 人")
+
+        page = self.client.get(f"{url}?project={self.project.pk}&search=汤清如")
+        self.assertContains(page, "2411001316")
+        self.assertContains(page, "共 1 人")
+
+        page = self.client.get(f"{url}?project={self.project.pk}&search=2411001316")
+        self.assertContains(page, member.name)
+        self.assertContains(page, "共 1 人")
+
+    def test_can_submit_for_admin_member(self):
+        """代提交对象不再被 is_staff 拦下：管理员本人也能被代提交"""
+        member = self._member_admin()
+        self.client.force_login(self.staff)
+
+        page = self.client.get(
+            reverse("admin_panel:submission_upload_for", args=[member.pk, self.project.pk])
+        )
+        self.assertEqual(page.status_code, 200)
+
+        response = self._upload_in_chunks(
+            b"data", chunk_size=1024, mode="admin",
+            project=str(self.project.pk), student_pk=member.pk,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(json.loads(response.content)["ok"])
+        self.assertTrue(
+            Submission.objects.filter(project=self.project, student=member).exists()
+        )
+
+    def test_user_form_toggles_class_member(self):
+        """用户管理里取消「计入班级统计」后，该账号从应交人数中移除"""
+        member = self._member_admin()
+        self.client.force_login(self.staff)
+
+        # 表单里不勾 is_class_member（复选框未勾选时浏览器不提交该字段）
+        self.client.post(reverse("admin_panel:user_edit", args=[member.pk]), {
+            "name": member.name, "is_staff": "on", "is_active": "on",
+        })
+        member.refresh_from_db()
+        self.assertFalse(member.is_class_member)
+        self.assertContains(self.client.get(reverse("admin_panel:stats")), "0 / 1")
+
+        # 勾回来即重新计入
+        self.client.post(reverse("admin_panel:user_edit", args=[member.pk]), {
+            "name": member.name, "is_staff": "on", "is_active": "on",
+            "is_class_member": "on",
+        })
+        member.refresh_from_db()
+        self.assertTrue(member.is_class_member)
+        self.assertContains(self.client.get(reverse("admin_panel:stats")), "0 / 2")
 
     # ---------- 备份记录 ----------
 

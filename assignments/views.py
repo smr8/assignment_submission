@@ -170,7 +170,8 @@ def chunk_upload_view(request):
         if not request.user.is_staff:
             return JsonResponse({"ok": False, "error": "没有权限"}, status=403)
         project = get_object_or_404(Project, pk=target)
-        student = get_object_or_404(User, pk=student_pk, is_staff=False)
+        # 代提交对象限班内成员：管理员本人也是班上一员，同样可以被代提交
+        student = get_object_or_404(User.objects.class_members(include_inactive=True), pk=student_pk)
         success_url = reverse("admin_panel:submission_list")
     else:
         project = get_object_or_404(Project, slug=target, is_active=True, archived_at__isnull=True)

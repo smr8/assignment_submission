@@ -25,6 +25,7 @@
                             <th>学号</th>
                             <th>姓名</th>
                             <th>管理员</th>
+                            <th>计入统计</th>
                             <th>激活</th>
                             <th>注册时间</th>
                             <th>操作</th>
@@ -38,6 +39,13 @@
                                 <td>
                                     {% if u.is_staff %}
                                         <span class="badge bg-danger">是</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">否</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if u.is_class_member %}
+                                        <span class="badge bg-primary">是</span>
                                     {% else %}
                                         <span class="badge bg-secondary">否</span>
                                     {% endif %}

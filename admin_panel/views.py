@@ -43,7 +43,8 @@ def dashboard_view(request):
 
     total_projects = Project.objects.count()
     total_submissions = Submission.objects.count()
-    total_students = User.objects.filter(is_staff=False, is_active=True).count()
+    # 管理员也是班上一员：口径按 class_members 走，不按 is_staff 排除
+    total_students = User.objects.class_members().count()
 
     # 已归档项目不再参与「各项目提交率」与平均提交率，避免历史项目把当前数据拉低
     projects = Project.objects.active()
@@ -121,7 +122,7 @@ def settings_view(request):
 def stats_view(request):
     projects = Project.objects.active().prefetch_related("images", "attachments")
     project_stats = []
-    total_students = User.objects.filter(is_staff=False, is_active=True).count()
+    total_students = User.objects.class_members().count()
 
     for project in projects:
         submitted_count = Submission.objects.filter(project=project).count()
@@ -145,7 +146,7 @@ def stats_view(request):
 def project_stats_detail_view(request, pk):
     """单个项目的提交明细：列出已交 / 未交学生的姓名与学号"""
     project = get_object_or_404(Project, pk=pk)
-    students = User.objects.filter(is_staff=False, is_active=True).order_by("student_id")
+    students = User.objects.class_members().order_by("student_id")
     submissions = Submission.objects.filter(project=project).select_related("student")
     sub_map = {sub.student_id: sub for sub in submissions}
 
@@ -594,7 +595,8 @@ def submission_list_view(request):
     if project_id:
         # 矩阵模式：展示该项目下所有学生（含未提交），便于代提交
         project = get_object_or_404(Project, pk=project_id)
-        students = User.objects.filter(is_staff=False, is_active=True).order_by("student_id")
+        # 口径与统计一致：班内成员，管理员也算一员，否则搜不到管理员本人
+        students = User.objects.class_members().order_by("student_id")
         if search:
             students = students.filter(
                 Q(student_id__icontains=search) | Q(name__icontains=search)
@@ -662,7 +664,8 @@ def submission_list_view(request):
 @staff_member_required
 def submission_upload_view(request, student_pk, project_pk):
     """管理员代学生提交作业（支持为尚未提交的学生新建提交）"""
-    student = get_object_or_404(User, pk=student_pk, is_staff=False)
+    # 代提交对象限班内成员（管理员本人也在其中）；已停用成员的旧记录仍可补传
+    student = get_object_or_404(User.objects.class_members(include_inactive=True), pk=student_pk)
     project = get_object_or_404(Project, pk=project_pk)
     # 查找已有提交（可能为 None，表示该学生尚未提交）
     submission = (
@@ -778,17 +781,21 @@ def user_create_view(request):
         name = request.POST.get("name", "")
         password = request.POST.get("password", "")
         is_staff = request.POST.get("is_staff") == "on"
-        is_active = request.POST.get("is_active", "on") == "on"
+        # 复选框未勾选时浏览器根本不提交该字段，所以只能按「是否存在」判断；
+        # 用 get(..., "on") 取默认值会让这个开关永远为真、取消不掉。
+        is_active = "is_active" in request.POST
+        is_class_member = "is_class_member" in request.POST
 
         if User.objects.filter(student_id=sid).exists():
             messages.error(request, f"学号「{sid}」已存在！")
             return render(request, "admin_panel/user_form.html", {"title": "新建用户", "form_values": {
-                "student_id": sid, "name": name, "is_staff": is_staff, "is_active": is_active, "is_edit": False,
+                "student_id": sid, "name": name, "is_staff": is_staff, "is_active": is_active,
+                "is_class_member": is_class_member, "is_edit": False,
             }})
 
         user = User.objects.create_user(
             student_id=sid, name=name, password=password,
-            is_staff=is_staff, is_active=is_active)
+            is_staff=is_staff, is_active=is_active, is_class_member=is_class_member)
         messages.success(request, f"用户「{user.name}」已创建！")
         return redirect("admin_panel:user_list")
 
@@ -797,6 +804,7 @@ def user_create_view(request):
         "name": "",
         "is_staff": False,
         "is_active": True,
+        "is_class_member": True,
         "is_edit": False,
     }})
 
@@ -808,7 +816,8 @@ def user_edit_view(request, pk):
     if request.method == "POST":
         user.name = request.POST.get("name", user.name)
         user.is_staff = request.POST.get("is_staff") == "on"
-        user.is_active = request.POST.get("is_active", "on") == "on"
+        user.is_active = "is_active" in request.POST
+        user.is_class_member = "is_class_member" in request.POST
         password = request.POST.get("password", "")
         if password:
             user.set_password(password)
@@ -823,6 +832,7 @@ def user_edit_view(request, pk):
             "name": user.name,
             "is_staff": user.is_staff,
             "is_active": user.is_active,
+            "is_class_member": user.is_class_member,
             "is_edit": True,
         },
     })
@@ -1139,6 +1149,37 @@ def restore_execute_view(request):
                 messages.success(request, "数据库已恢复。")
             except Exception as e:
                 errors.append(f"数据库恢复失败: {e}")
+            else:
+                # 旧备份的库结构往往落后于当前代码（比如缺少后来新增的表），
+                # 不迁移的话页面会直接抛「no such table: assignments_xxx」，
+                # 所以恢复完成后立刻把表结构对齐到当前代码。
+                try:
+                    from django.core.management import call_command
+                    from django.db import connection
+
+                    out = io.StringIO()
+                    call_command("migrate", interactive=False, verbosity=0, stdout=out)
+                    existing = set(connection.introspection.table_names())
+                    missing = [
+                        t for t in (
+                            "assignments_project",
+                            "assignments_projectimage",
+                            "assignments_projectattachment",
+                            "assignments_submission",
+                        )
+                        if t not in existing
+                    ]
+                    if missing:
+                        errors.append(
+                            "恢复后仍缺少数据表：" + "、".join(missing)
+                            + "。请在该环境手动执行 python manage.py migrate"
+                        )
+                    else:
+                        messages.success(request, "已自动执行数据库迁移，表结构已对齐当前代码。")
+                except Exception as e:
+                    errors.append(
+                        f"数据库已恢复，但自动迁移失败: {e}。请手动执行 python manage.py migrate"
+                    )
 
         # 恢复媒体文件
         media_root = str(settings.MEDIA_ROOT)
@@ -1161,7 +1202,7 @@ def restore_execute_view(request):
             messages.success(request, f"恢复完成，共恢复 {restored_count} 个文件。")
 
         if not skip_db and db_file:
-            messages.warning(request, "数据库已恢复，建议重启应用以使更改生效。")
+            messages.warning(request, "数据库已恢复并自动迁移，建议重启应用使新的数据库连接生效。")
 
     except Exception as e:
         messages.error(request, f"恢复失败: {e}")

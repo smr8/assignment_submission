@@ -1,0 +1,33 @@
+# 行尾策略：仓库与工作区统一 LF
+#
+# 不写这份文件时，Windows 上 core.autocrlf=true 会让 git 反复提示
+# "LF will be replaced by CRLF the next time Git touches it"，
+# 且同一份文件在不同机器上的行尾可能不一致（本仓库就出现过迁移文件
+# 在索引里是 LF、工作区却是 CRLF 的情况）。
+# 项目最终部署在 Linux，源码一律 LF 最稳妥。
+* text=auto eol=lf
+
+# Windows 原生脚本必须 CRLF，否则 cmd / PowerShell 可能不认
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制：不做行尾转换，也不当成文本 diff
+*.psd binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.bmp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.zip binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.sqlite3 binary

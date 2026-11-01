@@ -20,10 +20,13 @@ class Command(BaseCommand):
         # 1. 系统设置单例
         LiveSettings.load()
 
-        # 2. 管理员
+        # 2. 管理员（纯系统账号，不对应班里某个人，故不计入班级统计）
         admin, created = User.objects.get_or_create(
             student_id="admin",
-            defaults={"name": "管理员", "is_staff": True, "is_active": True},
+            defaults={
+                "name": "管理员", "is_staff": True, "is_active": True,
+                "is_class_member": False,
+            },
         )
         if created:
             admin.set_password("admin123")
